@@ -4,7 +4,7 @@ from logging import handlers
 
 class Logger():
 
-    def __init__(self, file, level, rollsize, backup):        
+    def __init__(self, file, level, rollsize, backup, stdout=False):        
         if level.lower() == "debug":
             self.level = logging.DEBUG
         elif level.lower() == "info":
@@ -20,9 +20,10 @@ class Logger():
             datefmt="%m/%d/%Y %H:%M:%S",
         )
 
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setFormatter(format)
-        self.logger.addHandler(ch)
+        if stdout:
+            ch = logging.StreamHandler(sys.stdout)
+            ch.setFormatter(format)
+            self.logger.addHandler(ch)
 
         filename = file.split(".")[0]
 

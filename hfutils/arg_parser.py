@@ -3,60 +3,19 @@ import sys
 import os
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 from transformers import HfArgumentParser
+from hfutils.options import DatasetArguments, InstanceArguments, ModelArguments, RayServeArguments
 
-from hfutils.constants import DATASET_TO_TASK_KEYS
 
 
-@dataclass
-class DatasetArguments:
-    task_name: str.lower = field(
-        default=None,
-        metadata={"help": "The name of the task to train on: " + ", ".join(DATASET_TO_TASK_KEYS.keys())},
-    )
-    dataset_name: str = field(
-        default=None, 
-        metadata={"help": "The name of the dataset to use (via the datasets library)."}
-    )
-
-    train_bsz: int = field(
-        default=2,
-        metadata={
-            "help": "Batch size of training, default 2."
-        },
-    )
-    eval_bsz: int = field(
-        default=2,
-        metadata={
-            "help": "Batch size of evaluation, default 2."
-        },
-    )
-
-    max_length: int = field(
-        default=128,
-        metadata={
-            "help": "The maximum total input sequence length after tokenization. Sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
-        },
-    )
-    pad_to_max_length: bool = field(
-        default=True,
-        metadata={
-            "help": "Whether to pad all samples to `max_seq_length`. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch."
-        },
-    )
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
+class RayArguments:
+    parser = HfArgumentParser((RayServeArguments, DatasetArguments))
+    def __init__(self):
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+            self.serve_args, self.data_args  = self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        else:
+            self.serve_args, self.data_args  = self.parser.parse_args_into_dataclasses()
 
 class HfArguments:
     parser = HfArgumentParser((ModelArguments, DatasetArguments))
@@ -67,6 +26,16 @@ class HfArguments:
             self.model_args, self.data_args = self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
         else:
             self.model_args, self.data_args = self.parser.parse_args_into_dataclasses()
+
+class DeployArguments:
+    parser = HfArgumentParser((ModelArguments, DatasetArguments, InstanceArguments))
+    def __init__(self):
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+            # If we pass only one argument to the script and it's the path to a json file,
+            # let's parse it to get our arguments.
+            self.model_args, self.data_args, self.ins_args = self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        else:
+            self.model_args, self.data_args, self.ins_args = self.parser.parse_args_into_dataclasses()
 
 class GlueArgParser(argparse.ArgumentParser):
 
@@ -132,10 +101,3 @@ class GlueArgParser(argparse.ArgumentParser):
     def parse(self):
         args = self.parse_args()
         return args
-
-    # parser = argparse.ArgumentParser(description="Finetune a transformers model on a text classification task")
-
-if __name__ == "__main__":
-    parser = GlueArgParser()
-    args = parser.parse()
-    print(args.num_train_epochs, type(parser))

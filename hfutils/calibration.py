@@ -1,7 +1,10 @@
+from typing import Any, Union
 from torch.functional import Tensor
 import torch.nn as nn
 import torch
 from torch.nn import functional as F
+import numpy as np
+
 
 class ECELoss(nn.Module):
     """
@@ -22,6 +25,7 @@ class ECELoss(nn.Module):
     "Obtaining Well Calibrated Probabilities Using Bayesian Binning." AAAI.
     2015.
     """
+
     def __init__(self, n_bins=15):
         """
         n_bins (int): number of confidence interval bins
@@ -49,14 +53,55 @@ class ECELoss(nn.Module):
         return ece
 
 
-def temperature_scale(logits: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
+m = torch.nn.Softmax(dim=-1)
+
+# def agg_logits(hist, curr, pos, device):
+#     if hist is not None:
+#         hist = hist.to(device)
+#         curr_prob, _ = torch.max(torch.float_power(m(curr), 2), dim=-1)
+#         hist_prob, _ = torch.max(torch.float_power(m(hist), 2), dim=-1)
+
+#         diff = torch.abs(hist_prob-curr_prob)
+#         # print(diff)
+#         for i in range(len(diff)):
+#             if diff[i] > 0.2:
+#                 if curr_prob[i] < hist_prob[i]:
+#                     curr[i] = hist[i]
+#             else:
+#                 curr[i] = (hist[i] * pos + curr[i]) / (pos+1)
+#     return curr
+
+
+def agg_logits(hist, curr, pos, device):
+    alpha = 0.6
+    if hist is not None:
+        hist = hist.to(device)
+        # return (hist * pos + curr) / (pos+1)
+        return hist * (1 - alpha) + curr * alpha
+    return curr
+
+
+def temperature_scale(
+    logits: torch.Tensor,
+    temperature: Any,
+) -> torch.Tensor:
     """
     Perform temperature scaling on logits
     """
     # Expand temperature to match the size of logits
-    temperature = temperature.unsqueeze(
-        1).expand(logits.size(0), logits.size(1)).to(logits.device)
+
+    if not isinstance(temperature, torch.Tensor):
+        temperature = torch.nn.Parameter(
+            torch.ones(1, device=logits.device) * temperature
+        )
+
+    temperature = (
+        temperature.unsqueeze(1)
+        .expand(logits.size(0), logits.size(1))
+        .to(logits.device)
+    )
     return logits / temperature
+
 
 def temperature_scaling(outputs: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     assert outputs.device == labels.device
@@ -71,7 +116,10 @@ def temperature_scaling(outputs: torch.Tensor, labels: torch.Tensor) -> torch.Te
 
     before_temperature_nll = nll_criterion(outputs, labels).item()
     before_temperature_ece = ece_criterion(outputs, labels).item()
-    print('Before temperature - NLL: %.3f, ECE: %.3f' % (before_temperature_nll, before_temperature_ece))
+    print(
+        "Before temperature - NLL: %.3f, ECE: %.3f"
+        % (before_temperature_nll, before_temperature_ece)
+    )
 
     def eval():
         optimizer.zero_grad()
@@ -81,9 +129,16 @@ def temperature_scaling(outputs: torch.Tensor, labels: torch.Tensor) -> torch.Te
 
     optimizer.step(eval)
 
-    after_temperature_nll = nll_criterion(temperature_scale(outputs, temperature), labels).item()
-    after_temperature_ece = ece_criterion(temperature_scale(outputs, temperature), labels).item()
-    print('Optimal temperature: %.3f' % temperature.item())
-    print('After temperature - NLL: %.3f, ECE: %.3f' % (after_temperature_nll, after_temperature_ece))
+    after_temperature_nll = nll_criterion(
+        temperature_scale(outputs, temperature), labels
+    ).item()
+    after_temperature_ece = ece_criterion(
+        temperature_scale(outputs, temperature), labels
+    ).item()
+    print("Optimal temperature: %.3f" % temperature.item())
+    print(
+        "After temperature - NLL: %.3f, ECE: %.3f"
+        % (after_temperature_nll, after_temperature_ece)
+    )
 
     return temperature.cpu().detach().cpu()

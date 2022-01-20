@@ -6,11 +6,11 @@ from transformers import AutoTokenizer
 from transformers import DataCollatorWithPadding, default_data_collator
 
 from hfutils.arg_parser import HfArguments
-from hfutils.constants import DATASET_TO_TASK_KEYS, DATASET_TO_TASK_LABELS
+from hfutils.constants import TASK_TO_KEYS, TASK_TO_LABELS
 
 def format_texts(examples, data_args):
     texts = []
-    fields = DATASET_TO_TASK_KEYS[data_args.dataset_name][data_args.task_name]
+    fields = TASK_TO_KEYS[data_args.task_name]
     for key in fields:
         if key is not None:
             texts.append(examples[key])
@@ -28,19 +28,35 @@ def do_padding(data_args):
 def label2seq(data_args, label):
     # easy_labels = ("true", "false")
     # return easy_labels[label]
-    if DATASET_TO_TASK_LABELS[data_args.dataset_name][data_args.task_name] is None:
+    if TASK_TO_LABELS[data_args.task_name] is None:
         return label
     else:
-        return DATASET_TO_TASK_LABELS[data_args.dataset_name][data_args.task_name][label]
+        return TASK_TO_LABELS[data_args.task_name][label]
         # return easy_labels[label]
 
 def default_preprocess(
-    tokenizer,
     examples,
     data_args,
+    tokenizer=None,
     label_to_id=None,
 ):
     texts = format_texts(examples, data_args)
+    fields = TASK_TO_KEYS[data_args.task_name]
+
+    processed_examples = []
+    for i in range(len(texts[0])):
+        elements = [data_args.task_name]
+        for j in range(len(texts)):
+            if fields[j] is None: continue
+            elements.append(fields[j]+":")
+            elements.append(texts[j][i])
+        processed_examples.append(" ".join(elements))
+
+    if tokenizer is None:
+        return {
+            "input_text": processed_examples
+        }
+
     result = tokenizer(*texts, padding=do_padding(data_args), max_length=data_args.max_length, truncation=True)
 
     if "label" in examples:
@@ -53,15 +69,13 @@ def default_preprocess(
     return result
 
 def seq2seq_preprocess(
-    tokenizer,
     examples,
     data_args,
+    tokenizer=None,
     label_to_id=None,
 ):
     texts = format_texts(examples, data_args)
-    fields = DATASET_TO_TASK_KEYS[data_args.dataset_name][data_args.task_name]
-
-    # print(examples)
+    fields = TASK_TO_KEYS[data_args.task_name]
 
     processed_examples = []
     for i in range(len(texts[0])):
@@ -71,6 +85,11 @@ def seq2seq_preprocess(
             elements.append(fields[j]+":")
             elements.append(texts[j][i])
         processed_examples.append(" ".join(elements))
+
+    if tokenizer is None:
+        return {
+            "input_text": processed_examples
+        }
 
     texts = (
         (processed_examples,)

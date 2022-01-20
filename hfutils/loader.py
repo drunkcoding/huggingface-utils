@@ -1,3 +1,5 @@
+import numpy as np
+import time
 from torch.utils.data.dataloader import DataLoader
 from functools import partial
 from transformers import AutoConfig, AutoTokenizer, AutoModel
@@ -5,7 +7,7 @@ from datasets import load_dataset, load_metric
 from transformers.data.data_collator import DataCollatorForSeq2Seq, DataCollatorWithPadding, default_data_collator
 
 from hfutils.arg_parser import HfArguments
-from hfutils.constants import DATASET_TO_TASK_LABELS
+from hfutils.constants import TASK_TO_LABELS
 from hfutils.preprocess import default_preprocess, seq2seq_preprocess
 
 class ModelLoader:
@@ -13,10 +15,15 @@ class ModelLoader:
         self.model_args = args.model_args
         self.data_args = args.data_args
 
+        self.model_cls = AutoModel
+
+    def set_custom_model_class(self, model_cls):
+        self.model_cls = model_cls
+
     def load(self, deepspeed=True, load_tokenizer=True, load_model=True):
         model_args = self.model_args
         data_args = self.data_args
-        labels = DATASET_TO_TASK_LABELS[data_args.dataset_name][data_args.task_name]
+        labels = TASK_TO_LABELS[data_args.task_name]
         config = AutoConfig.from_pretrained(
             model_args.model_name_or_path,
             num_labels=len(labels) if labels is not None else None,
@@ -29,9 +36,10 @@ class ModelLoader:
         if load_tokenizer:
             tokenizer = AutoTokenizer.from_pretrained(
                 model_args.model_name_or_path,
+                from_slow=True,
             )
         if load_model:
-            model = AutoModel.from_pretrained(
+            model = self.model_cls.from_pretrained(
                 model_args.model_name_or_path,
                 config=config,
             )
@@ -50,12 +58,12 @@ class DatasetLoader:
         #HARD CODE seq2seq model
         self.is_seq2seq = "t5" in self.model_args.model_name_or_path
     
-    def load(self, tokenizer, tokenize:bool=True, partition:str="train", create_dataloader:bool=False):
+    def load(self, tokenizer=None, partition:str="train", create_dataloader:bool=False):
         data_args = self.data_args
         raw_datasets = load_dataset(data_args.dataset_name.lower(), data_args.task_name.lower())       
 
         preprocessor = partial(seq2seq_preprocess if self.is_seq2seq else default_preprocess, 
-            tokenizer,
+            tokenizer=tokenizer,
             data_args=data_args)
 
         raw_datasets = raw_datasets.map(
@@ -64,12 +72,7 @@ class DatasetLoader:
             desc="Running tokenizer on dataset",
         )
 
-        dataset = raw_datasets[partition]
-
-        if not tokenize:
-            return dataset
-
-        
+        dataset = raw_datasets[partition].shuffle(seed=int(time.time()))        
 
         if create_dataloader:
 
