@@ -1,5 +1,6 @@
 import copy
 from pyexpat import model
+import time
 from turtle import position
 from typing import List, Tuple
 from transformers import T5ForConditionalGeneration
@@ -42,6 +43,7 @@ class DummyModule(nn.Module, ModuleUtilsMixin):
 
     def to(self, device):
         self.device = device
+        # self.device_map = [self.device for _ in range(len(module_list))]
         return super().to(device)
 
 
@@ -148,8 +150,6 @@ class T5Pipe(DummyModule):
 
         self.exec_map = exec_map if exec_map is not None else (0, len(module_list))
 
-        self.device_map = [self.device for _ in range(len(module_list))]
-
         self.encoder_mask = np.zeros(len(module_list)).astype(bool)
         self.encoder_mask[: len(encoder.to_layers())] = True
 
@@ -177,35 +177,47 @@ class T5Pipe(DummyModule):
 
         self.pipe = nn.ModuleList(module_list)
 
-    def parallize(self, device_map: List = None):
-        if device_map is not None:
-            self.device_map = device_map
+    # def parallize(self, device_map: List = None):
+    #     if device_map is not None:
+    #         self.device_map = device_map
 
-        # print(self.device_map)
-        new_pipe = []
-        for idx, layer in enumerate(self.pipe):
-            new_pipe.append(copy.deepcopy(layer.to(self.device_map[idx])))
+    #     # print(self.device_map)
+    #     new_pipe = []
+    #     for idx, layer in enumerate(self.pipe):
+    #         new_pipe.append(copy.deepcopy(layer.to(self.device)))
 
-        del self.pipe
-        torch.cuda.empty_cache()
-        gc.collect()
+    #     del self.pipe
+    #     torch.cuda.empty_cache()
+    #     gc.collect()
 
-        self.pipe = nn.ModuleList(new_pipe)
+    #     self.pipe = nn.ModuleList(new_pipe)
 
-    async def call_layer(self, idx, *args, **kwds):
+    async def call_layer_async(self, idx, *args, **kwds):
         # print(args[0].device)
-        # print(self.device_map[idx])
-        # return self.pipe[idx](*args, **kwds)
-        return self.pipe[idx](
-            *[
-                arg.to(self.device_map[idx]) if arg is not None else None
-                for arg in args
-            ],
-            **{
-                k: v.to(self.device_map[idx]) if v is not None else None
-                for k, v in kwds.items()
-            },
-        )
+        # print(self.device)
+        return self.pipe[idx](*args, **kwds)
+        # return self.pipe[idx](
+        #     *[
+        #         arg.to(self.device) if arg is not None else None
+        #         for arg in args
+        #     ],
+        #     **{
+        #         k: v.to(self.device) if v is not None else None
+        #         for k, v in kwds.items()
+        #     },
+        # )
+    def call_layer_sync(self, idx, *args, **kwds):
+        # return self.pipe[idx](
+        #     *[
+        #         arg.to(self.device) if arg is not None else None
+        #         for arg in args
+        #     ],
+        #     **{
+        #         k: v.to(self.device) if v is not None else None
+        #         for k, v in kwds.items()
+        #     },
+        # )
+        return self.pipe[idx](*args, **kwds)
 
     @torch.no_grad()
     async def forward_async(self, args):
@@ -223,62 +235,83 @@ class T5Pipe(DummyModule):
             encoder_decoder_position_bias,
         ) = args
 
+        extended_attention_mask = None
+
+        start_time = time.perf_counter()
         for idx in range(*self.exec_map):
             is_decoder = ~self.encoder_mask[idx]
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
 
             # print(type(self.pipe[idx]))
+            # end_time = time.perf_counter()
+            # print(idx, "layer infetence time", (end_time-start_time)*1000)
+            # start_time = time.perf_counter()
+
+            attention_mask = attention_mask.to(self.device)
+            input_ids = input_ids.to(self.device)
+            if extended_attention_mask is None:
+                extended_attention_mask = self.get_extended_attention_mask(
+                    attention_mask, input_shape, self.device, False
+                )
 
             if is_decoder and input_shape[1] != 1: # self.encoder_mask[idx - 1]:
                 position_bias = None
                 input_ids = self._prepare_decoder_input_ids_for_generation(input_ids)
                 encoder_attention_mask = attention_mask
-                attention_mask = input_ids.new_ones(input_ids.shape, dtype=torch.long)
+                attention_mask = input_ids.new_ones(input_ids.shape, dtype=torch.long, device=self.device)
                 input_shape = input_ids.size()
                 input_ids = input_ids.view(-1, input_shape[-1])
+                input_ids = input_ids.to(self.device)
 
-            # if idx == 0 or self.device_map[idx] != self.device_map[idx-1]
-            # if encoder_hidden_states is not None:
-            #     encoder_hidden_states = encoder_hidden_states.to(self.device_map[idx])
-            # if decoder_hidden_states is not None:
-            #     decoder_hidden_states = decoder_hidden_states.to(self.device_map[idx])
-            # if position_bias is not None:
-            #     position_bias = position_bias.to(self.device_map[idx])
-            # if encoder_decoder_position_bias is not None:
-            #     encoder_decoder_position_bias = encoder_decoder_position_bias.to(self.device_map[idx])
-            # if input_ids is not None:
-            #     input_ids = input_ids.to(self.device_map[idx])
-            # if attention_mask is not None:
-            #     attention_mask = attention_mask.to(self.device_map[idx])
-
-            if self.embed_mask[idx] and not is_decoder:
-                # print("embed_mask encoder")
-                encoder_hidden_states = await self.call_layer(idx, input_ids)
-            elif self.embed_mask[idx] and is_decoder:
-                # print("embed_mask decoder")
-                decoder_hidden_states = await self.call_layer(idx, input_ids)
-            elif self.ln_mask[idx] and not is_decoder:
-                # print("ln_mask encoder")
-                encoder_hidden_states = await self.call_layer(
-                    idx, encoder_hidden_states
-                )
-            elif self.ln_mask[idx] and is_decoder:
-                # print("ln_mask decoder")
-                decoder_hidden_states = await self.call_layer(
-                    idx, decoder_hidden_states
-                )
-            elif is_decoder:
-                # print("block decoder")
-                attention_mask = attention_mask.to(self.device_map[idx])
                 extended_attention_mask = self.get_extended_attention_mask(
-                    attention_mask, input_shape, self.device_map[idx], True
+                    attention_mask, input_shape, self.device, True
                 )
                 encoder_extended_attention_mask = self.invert_attention_mask(
                     encoder_attention_mask
                 )
+
+            # if idx == 0 or self.device != self.device_map[idx-1]
+            # if encoder_hidden_states is not None:
+            #     encoder_hidden_states = encoder_hidden_states.to(self.device)
+            # if decoder_hidden_states is not None:
+            #     decoder_hidden_states = decoder_hidden_states.to(self.device)
+            # if position_bias is not None:
+            #     position_bias = position_bias.to(self.device)
+            # if encoder_decoder_position_bias is not None:
+            #     encoder_decoder_position_bias = encoder_decoder_position_bias.to(self.device)
+            # if input_ids is not None:
+            #     input_ids = input_ids.to(self.device)
+            # if attention_mask is not None:
+            #     attention_mask = attention_mask.to(self.device)
+
+            if self.embed_mask[idx] and not is_decoder:
+                # print("embed_mask encoder")
+                encoder_hidden_states = await self.call_layer_async(idx, input_ids)
+            elif self.embed_mask[idx] and is_decoder:
+                # print("embed_mask decoder")
+                decoder_hidden_states = await self.call_layer_async(idx, input_ids)
+            elif self.ln_mask[idx] and not is_decoder:
+                # print("ln_mask encoder")
+                encoder_hidden_states = await self.call_layer_async(
+                    idx, encoder_hidden_states
+                )
+            elif self.ln_mask[idx] and is_decoder:
+                # print("ln_mask decoder")
+                decoder_hidden_states = await self.call_layer_async(
+                    idx, decoder_hidden_states
+                )
+            elif is_decoder:
+                # print("block decoder")
+                # attention_mask = attention_mask.to(self.device)
+                # extended_attention_mask = self.get_extended_attention_mask(
+                #     attention_mask, input_shape, self.device, True
+                # )
+                # encoder_extended_attention_mask = self.invert_attention_mask(
+                #     encoder_attention_mask
+                # )
                 # print(decoder_hidden_states, encoder_hidden_states)
-                layer_outputs = await self.call_layer(
+                layer_outputs = await self.call_layer_async(
                     idx,
                     decoder_hidden_states,
                     attention_mask=extended_attention_mask,
@@ -293,11 +326,11 @@ class T5Pipe(DummyModule):
                 encoder_decoder_position_bias = layer_outputs[3]
             elif not is_decoder:
                 # print("block encoder")
-                attention_mask = attention_mask.to(self.device_map[idx])
-                extended_attention_mask = self.get_extended_attention_mask(
-                    attention_mask, input_shape, self.device_map[idx], False
-                )
-                layer_outputs = await self.call_layer(
+                # attention_mask = attention_mask.to(self.device)
+                # extended_attention_mask = self.get_extended_attention_mask(
+                #     attention_mask, input_shape, self.device, False
+                # )
+                layer_outputs = await self.call_layer_async(
                     idx,
                     encoder_hidden_states,
                     position_bias=position_bias,
@@ -318,52 +351,77 @@ class T5Pipe(DummyModule):
 
     @torch.no_grad()
     def forward(self, args, output_hidden_states=False):
+
+        # FIRST INPUT
+        if len(args) == 2:
+            args =  args + (None, None, None, None)
+
         (
+            input_ids,
+            attention_mask,
             encoder_hidden_states,
             decoder_hidden_states,
             position_bias,
             encoder_decoder_position_bias,
-            input_ids,
-            attention_mask,
         ) = args
-        all_hidden_states = () if output_hidden_states else None
+
+        extended_attention_mask = None
+        if output_hidden_states:
+            all_hidden_states = ()
+
+        start_time = time.perf_counter()
         for idx in range(*self.exec_map):
             is_decoder = ~self.encoder_mask[idx]
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
 
             # print(type(self.pipe[idx]))
+            # end_time = time.perf_counter()
+            # print(idx, "layer infetence time", (end_time-start_time)*1000)
+            # start_time = time.perf_counter()
+            input_ids = input_ids.to(self.device)
+            attention_mask = attention_mask.to(self.device)
+            if extended_attention_mask is None:
+                extended_attention_mask = self.get_extended_attention_mask(
+                    attention_mask, input_shape, self.device, False
+                )
 
-            if is_decoder and self.encoder_mask[idx - 1]:
+            if is_decoder and input_shape[1] != 1: # self.encoder_mask[idx - 1]:
                 position_bias = None
                 input_ids = self._prepare_decoder_input_ids_for_generation(input_ids)
                 encoder_attention_mask = attention_mask
-                attention_mask = input_ids.new_ones(input_ids.shape, dtype=torch.long)
+                attention_mask = input_ids.new_ones(input_ids.shape, dtype=torch.long, device=self.device)
                 input_shape = input_ids.size()
                 input_ids = input_ids.view(-1, input_shape[-1])
 
-            if self.embed_mask[idx] and not is_decoder:
-                # print("embed_mask encoder")
-                encoder_hidden_states = self.pipe[idx](input_ids)
-            elif self.embed_mask[idx] and is_decoder:
-                # print("embed_mask decoder")
-                decoder_hidden_states = self.pipe[idx](input_ids)
-            elif self.ln_mask[idx] and not is_decoder:
-                # print("ln_mask encoder")
-                encoder_hidden_states = self.pipe[idx](encoder_hidden_states)
-            elif self.ln_mask[idx] and is_decoder:
-                # print("ln_mask decoder")
-                decoder_hidden_states = self.pipe[idx](decoder_hidden_states)
-            elif is_decoder:
-                # print("block decoder")
                 extended_attention_mask = self.get_extended_attention_mask(
                     attention_mask, input_shape, self.device, True
                 )
                 encoder_extended_attention_mask = self.invert_attention_mask(
                     encoder_attention_mask
                 )
+
+            if self.embed_mask[idx] and not is_decoder:
+                # print("embed_mask encoder")
+                encoder_hidden_states = self.call_layer_sync(idx, input_ids)
+            elif self.embed_mask[idx] and is_decoder:
+                # print("embed_mask decoder")
+                decoder_hidden_states = self.call_layer_sync(idx, input_ids)
+            elif self.ln_mask[idx] and not is_decoder:
+                # print("ln_mask encoder")
+                encoder_hidden_states = self.call_layer_sync(
+                    idx, encoder_hidden_states
+                )
+            elif self.ln_mask[idx] and is_decoder:
+                # print("ln_mask decoder")
+                decoder_hidden_states = self.call_layer_sync(
+                    idx, decoder_hidden_states
+                )
+            elif is_decoder:
+                # print("block decoder")
                 # print(decoder_hidden_states, encoder_hidden_states)
-                layer_outputs = self.pipe[idx](
+                layer_outputs = self.call_layer_sync(
+                    idx,
                     decoder_hidden_states,
                     attention_mask=extended_attention_mask,
                     position_bias=position_bias,
@@ -372,15 +430,14 @@ class T5Pipe(DummyModule):
                     encoder_attention_mask=encoder_extended_attention_mask,
                 )
                 layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
+                print(layer_outputs)
                 decoder_hidden_states = layer_outputs[0]
                 position_bias = layer_outputs[2]
                 encoder_decoder_position_bias = layer_outputs[3]
             elif not is_decoder:
                 # print("block encoder")
-                extended_attention_mask = self.get_extended_attention_mask(
-                    attention_mask, input_shape, self.device, False
-                )
-                layer_outputs = self.pipe[idx](
+                layer_outputs = self.call_layer_sync(
+                    idx,
                     encoder_hidden_states,
                     position_bias=position_bias,
                     attention_mask=extended_attention_mask,
@@ -389,20 +446,113 @@ class T5Pipe(DummyModule):
                 encoder_hidden_states = layer_outputs[0]
                 position_bias = layer_outputs[2]
 
-            # print(encoder_hidden_states, decoder_hidden_states, input_ids, attention_mask)
-
             if output_hidden_states and self.hidden_mask[idx]:
                 all_hidden_states = all_hidden_states + (
                     decoder_hidden_states if is_decoder else encoder_hidden_states,
                 )
 
+        # print(encoder_hidden_states, decoder_hidden_states, encoder_decoder_position_bias, input_ids, attention_mask)
+        if output_hidden_states:
+            return (
+                encoder_hidden_states,
+                decoder_hidden_states,
+                position_bias,
+                encoder_decoder_position_bias,
+                all_hidden_states
+            )
+        
         return (
             encoder_hidden_states,
             decoder_hidden_states,
             position_bias,
             encoder_decoder_position_bias,
-            all_hidden_states,
         )
+    # def forward(self, args, output_hidden_states=False):
+    #     (
+    #         encoder_hidden_states,
+    #         decoder_hidden_states,
+    #         position_bias,
+    #         encoder_decoder_position_bias,
+    #         input_ids,
+    #         attention_mask,
+    #     ) = args
+    #     all_hidden_states = () if output_hidden_states else None
+    #     for idx in range(*self.exec_map):
+    #         is_decoder = ~self.encoder_mask[idx]
+    #         input_shape = input_ids.size()
+    #         input_ids = input_ids.view(-1, input_shape[-1])
+
+    #         # print(type(self.pipe[idx]))
+
+    #         if is_decoder and self.encoder_mask[idx - 1]:
+    #             position_bias = None
+    #             input_ids = self._prepare_decoder_input_ids_for_generation(input_ids)
+    #             encoder_attention_mask = attention_mask
+    #             attention_mask = input_ids.new_ones(input_ids.shape, dtype=torch.long)
+    #             input_shape = input_ids.size()
+    #             input_ids = input_ids.view(-1, input_shape[-1])
+
+    #         if self.embed_mask[idx] and not is_decoder:
+    #             # print("embed_mask encoder")
+    #             encoder_hidden_states = self.pipe[idx](input_ids)
+    #         elif self.embed_mask[idx] and is_decoder:
+    #             # print("embed_mask decoder")
+    #             decoder_hidden_states = self.pipe[idx](input_ids)
+    #         elif self.ln_mask[idx] and not is_decoder:
+    #             # print("ln_mask encoder")
+    #             encoder_hidden_states = self.pipe[idx](encoder_hidden_states)
+    #         elif self.ln_mask[idx] and is_decoder:
+    #             # print("ln_mask decoder")
+    #             decoder_hidden_states = self.pipe[idx](decoder_hidden_states)
+    #         elif is_decoder:
+    #             # print("block decoder")
+    #             extended_attention_mask = self.get_extended_attention_mask(
+    #                 attention_mask, input_shape, self.device, True
+    #             )
+    #             encoder_extended_attention_mask = self.invert_attention_mask(
+    #                 encoder_attention_mask
+    #             )
+    #             # print(decoder_hidden_states, encoder_hidden_states)
+    #             layer_outputs = self.pipe[idx](
+    #                 decoder_hidden_states,
+    #                 attention_mask=extended_attention_mask,
+    #                 position_bias=position_bias,
+    #                 encoder_decoder_position_bias=encoder_decoder_position_bias,
+    #                 encoder_hidden_states=encoder_hidden_states,
+    #                 encoder_attention_mask=encoder_extended_attention_mask,
+    #             )
+    #             layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
+    #             decoder_hidden_states = layer_outputs[0]
+    #             position_bias = layer_outputs[2]
+    #             encoder_decoder_position_bias = layer_outputs[3]
+    #         elif not is_decoder:
+    #             # print("block encoder")
+    #             extended_attention_mask = self.get_extended_attention_mask(
+    #                 attention_mask, input_shape, self.device, False
+    #             )
+    #             layer_outputs = self.pipe[idx](
+    #                 encoder_hidden_states,
+    #                 position_bias=position_bias,
+    #                 attention_mask=extended_attention_mask,
+    #             )
+    #             layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
+    #             encoder_hidden_states = layer_outputs[0]
+    #             position_bias = layer_outputs[2]
+
+    #         # print(encoder_hidden_states, decoder_hidden_states, input_ids, attention_mask)
+
+    #         if output_hidden_states and self.hidden_mask[idx]:
+    #             all_hidden_states = all_hidden_states + (
+    #                 decoder_hidden_states if is_decoder else encoder_hidden_states,
+    #             )
+
+    #     return (
+    #         encoder_hidden_states,
+    #         decoder_hidden_states,
+    #         position_bias,
+    #         encoder_decoder_position_bias,
+    #         all_hidden_states,
+    #     )
 
     def get_extended_attention_mask(
         self,
