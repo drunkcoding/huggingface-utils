@@ -12,6 +12,7 @@ from torch import nn
 import gc
 import numpy as np
 from torch import Tensor
+from deepspeed.pipe import PipelineModule, LayerSpec
 
 
 def get_embed_dim(config):
@@ -43,6 +44,9 @@ class DummyModule(nn.Module, ModuleUtilsMixin):
     def to(self, device):
         self.device = device
         return super().to(device)
+
+
+
 
 
 # class T5BlockPipe(DummyModule):
@@ -565,3 +569,252 @@ class T5Pipe(DummyModule):
         raise ValueError(
             "`decoder_start_token_id` or `bos_token_id` has to be defined for encoder-decoder generation."
         )
+
+def get_decoder_start_token_id(
+        self, decoder_start_token_id: int = None, bos_token_id: int = None
+    ) -> int:
+    decoder_start_token_id = (
+        decoder_start_token_id
+        if decoder_start_token_id is not None
+        else self.config.decoder_start_token_id
+    )
+    bos_token_id = (
+        bos_token_id # if bos_token_id is not None else self.config.bos_token_id
+    )
+
+    if decoder_start_token_id is not None:
+        return decoder_start_token_id
+    elif (
+        hasattr(self.config, "decoder")
+        and hasattr(self.config.decoder, "decoder_start_token_id")
+        and self.config.decoder.decoder_start_token_id is not None
+    ):
+        return self.config.decoder.decoder_start_token_id
+    elif bos_token_id is not None:
+        return bos_token_id
+    elif (
+        hasattr(self.config, "decoder")
+        and hasattr(self.config.decoder, "bos_token_id")
+        and self.config.decoder.bos_token_id is not None
+    ):
+        return self.config.decoder.bos_token_id
+    raise ValueError(
+        "`decoder_start_token_id` or `bos_token_id` has to be defined for encoder-decoder generation."
+    )
+
+def prepare_decoder_input_ids_for_generation(
+    input_ids: torch.LongTensor,
+    decoder_start_token_id: int = None,
+    bos_token_id: int = None,
+) -> torch.LongTensor:
+    decoder_start_token_id = get_decoder_start_token_id(
+        decoder_start_token_id, bos_token_id
+    )
+    decoder_input_ids = (
+        torch.ones(
+            (input_ids.shape[0], 1), dtype=torch.long, device=input_ids.device
+        )
+        * decoder_start_token_id
+    )
+    return decoder_input_ids
+
+class T5EmbeddingPipe(nn.Module):
+    def __init__(self, config: T5Config) -> None:
+        super().__init__()
+
+        self.embed_dim = get_embed_dim(config)
+        self.embed = nn.Embedding(config.vocab_size, self.embed_dim)
+        self.is_decoder = config.is_decoder
+
+    def forward(self, args):
+        (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_input_ids,
+            decoder_attention_mask,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        ) = args
+
+        if self.is_decoder:
+            decoder_input_ids = prepare_decoder_input_ids_for_generation(encoder_input_ids)
+            decoder_attention_mask = decoder_input_ids.new_ones(decoder_input_ids.shape, dtype=torch.long)
+            input_shape = decoder_input_ids.size()
+            decoder_input_ids = decoder_input_ids.view(-1, input_shape[-1])
+
+        return (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states if self.is_decoder else self.embed(encoder_input_ids),
+            decoder_attention_mask,
+            decoder_input_ids,
+            decoder_hidden_states if not self.is_decoder else self.embed(decoder_input_ids),
+            None,
+            None,
+        )
+
+class T5BlockPipe(nn.Module):
+    def __init__(self, config: T5Config, i: int) -> None:
+        super().__init__()
+
+        self.block = T5Block(config, has_relative_attention_bias=bool(i == 0))
+        self.is_decoder = config.is_decoder
+
+    def forward(self, args):
+        (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_input_ids,
+            decoder_attention_mask,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        ) = args
+
+        if self.is_decoder:
+            # print("block decoder")
+            input_shape = decoder_input_ids.size()
+            extended_attention_mask = self.get_extended_attention_mask(
+                decoder_attention_mask, input_shape, self.device, True
+            )
+            encoder_extended_attention_mask = self.invert_attention_mask(
+                encoder_attention_mask
+            )
+            # print(decoder_hidden_states, encoder_hidden_states)
+            layer_outputs = self.block(
+                decoder_hidden_states,
+                attention_mask=extended_attention_mask,
+                position_bias=position_bias,
+                encoder_decoder_position_bias=encoder_decoder_position_bias,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_extended_attention_mask,
+            )
+            layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
+            decoder_hidden_states = layer_outputs[0]
+            position_bias = layer_outputs[2]
+            encoder_decoder_position_bias = layer_outputs[3]
+        if not self.is_decoder:
+            # print("block encoder")
+            input_shape = encoder_input_ids.size()
+            extended_attention_mask = self.get_extended_attention_mask(
+                encoder_attention_mask, input_shape, self.device, False
+            )
+            layer_outputs = self.block(
+                encoder_hidden_states,
+                position_bias=position_bias,
+                attention_mask=extended_attention_mask,
+            )
+            layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
+            encoder_hidden_states = layer_outputs[0]
+            position_bias = layer_outputs[2]
+
+        return (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_attention_mask,
+            decoder_input_ids,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        )
+
+class T5BLMHeadPipe(nn.Module):
+    def __init__(self, config: T5Config) -> None:
+        super().__init__()
+
+        self.embed_dim = get_embed_dim(config)
+        self.lm_head = nn.Linear(self.embed_dim, config.vocab_size, bias=False)
+        # self.is_decoder = config.is_decoder
+
+    def forward(self, args):
+        (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_input_ids,
+            decoder_attention_mask,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        ) = args
+
+        return self.lm_head(decoder_hidden_states)
+
+class T5StackFFPipe(nn.Module):
+    def __init__(self, config: T5Config) -> None:
+        super().__init__()
+
+        self.embed_dim = get_embed_dim(config)
+
+        self.final_layer_norm = T5LayerNorm(
+            self.embed_dim, eps=config.layer_norm_epsilon
+        )
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.is_decoder = config.is_decoder
+
+    def forward(self, args):
+        (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_input_ids,
+            decoder_attention_mask,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        ) = args
+
+        if self.is_decoder:
+            decoder_hidden_states = self.final_layer_norm(decoder_hidden_states)
+            decoder_hidden_states = self.dropout(decoder_hidden_states)
+        if not self.is_decoder:
+           encoder_hidden_states = self.final_layer_norm(encoder_hidden_states)
+           encoder_hidden_states = self.dropout(encoder_hidden_states)
+
+        return (
+            encoder_input_ids,
+            encoder_attention_mask,
+            encoder_hidden_states,
+            decoder_attention_mask,
+            decoder_input_ids,
+            decoder_hidden_states,
+            position_bias,
+            encoder_decoder_position_bias,
+        )
+
+class T5DeepSpeedPipe(PipelineModule):
+   def __init__(self, config: T5Config, **kwargs) -> None:
+
+        self.embed_dim = get_embed_dim(config)
+
+        encoder_config = copy.deepcopy(config)
+        encoder_config.is_decoder = False
+        encoder_config.use_cache = False
+        encoder_config.is_encoder_decoder = False
+
+        self.n_layers = get_num_layers(config)
+
+        encoder_specs = [
+            LayerSpec(T5EmbeddingPipe, config),
+            *[LayerSpec(T5BlockPipe, config, i) for i in range(self.n_layers)],
+            LayerSpec(T5StackFFPipe, config),
+        ]       
+
+        decoder_config = copy.deepcopy(config)
+        decoder_config.is_decoder = True
+        decoder_config.is_encoder_decoder = False
+        decoder_config.num_layers = config.num_decoder_layers
+        
+        decoder_specs = [
+            LayerSpec(T5EmbeddingPipe, config),
+            *[LayerSpec(T5BlockPipe, config, i) for i in range(self.n_layers)],
+            LayerSpec(T5StackFFPipe, config),
+            LayerSpec(T5BLMHeadPipe, config),
+        ]
+
+        super().__init__(layers=encoder_specs + decoder_specs, **kwargs)
+    
