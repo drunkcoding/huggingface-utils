@@ -11,6 +11,13 @@ class RayServeArguments:
     )
 
 @dataclass
+class DeepSpeedArguments:
+    deepspeed_config: str = field(
+        default=None,
+        metadata={"help": "DeepSpeed configuration path."},
+    )
+
+@dataclass
 class DatasetArguments:
     task_name: str.lower = field(
         default=None,
