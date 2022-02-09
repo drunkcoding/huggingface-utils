@@ -10,6 +10,14 @@ class RayServeArguments:
         metadata={"help": "The Ray model configuration file path."},
     )
 
+    deployment: str = field(
+        metadata={"help": "Name of the deployment in the configuration file."},
+    )
+
+    tag: str = field(
+        metadata={"help": "Tagging service monitoring, must be unique, otherwise delete entry from database."},
+    )
+
 @dataclass
 class DeepSpeedArguments:
     deepspeed_config: str = field(
