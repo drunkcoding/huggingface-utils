@@ -1,4 +1,4 @@
 #!/bin/bash
 
 python3 -m build
-pip3 install dist/*.tar.gz
+python3 -m pip install dist/*.tar.gz

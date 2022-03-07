@@ -12,6 +12,8 @@ class Logger():
         else:
             raise ValueError('logging level must be INFO or DEBUG')
 
+        logging.addLevelName(5, "TRACE")
+
         self.logger = logging.getLogger()
         self.logger.setLevel(self.level)
 
@@ -45,6 +47,9 @@ class Logger():
 
     def warn(self, pattern, *args):
         self.logger.warn(pattern, *args)
+
+    def trace(self, pattern, *args):
+        self.logger.log(5, pattern, *args)
  
 if __name__ == "__main__":
     logger = Logger(__file__, "info", 0, 0)

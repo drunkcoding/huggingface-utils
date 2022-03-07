@@ -4,9 +4,19 @@ import os
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from transformers import HfArgumentParser
+from transformers import HfArgumentParser, TrainingArguments
 from hfutils.options import DatasetArguments, InstanceArguments, ModelArguments, RayServeArguments, DeepSpeedArguments
 
+
+class TestArguments:
+    parser = HfArgumentParser((ModelArguments, DatasetArguments))
+    def __init__(self):
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+            # If we pass only one argument to the script and it's the path to a json file,
+            # let's parse it to get our arguments.
+            self.model_args, self.data_args= self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        else:
+            self.model_args, self.data_args = self.parser.parse_args_into_dataclasses()
 
 class RayArguments:
     parser = HfArgumentParser((RayServeArguments, DatasetArguments))
@@ -17,14 +27,14 @@ class RayArguments:
             self.serve_args, self.data_args  = self.parser.parse_args_into_dataclasses()
 
 class HfArguments:
-    parser = HfArgumentParser((ModelArguments, DatasetArguments, DeepSpeedArguments))
+    parser = HfArgumentParser((ModelArguments, DatasetArguments, DeepSpeedArguments, TrainingArguments))
     def __init__(self):
         if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
             # If we pass only one argument to the script and it's the path to a json file,
             # let's parse it to get our arguments.
-            self.model_args, self.data_args, self.ds_args = self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+            self.model_args, self.data_args, self.ds_args, self.training_args = self.parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
         else:
-            self.model_args, self.data_args, self.ds_args = self.parser.parse_args_into_dataclasses()
+            self.model_args, self.data_args, self.ds_args, self.training_args = self.parser.parse_args_into_dataclasses()
 
 class DeployArguments:
     parser = HfArgumentParser((ModelArguments, DatasetArguments, InstanceArguments))

@@ -1,3 +1,4 @@
+from turtle import forward
 from typing import Any, Union
 from torch.functional import Tensor
 import torch.nn as nn
@@ -79,6 +80,51 @@ def agg_logits(hist, curr, pos, device):
         # return (hist * pos + curr) / (pos+1)
         return hist * (1 - alpha) + curr * alpha
     return curr
+
+class CalibrationLayer(torch.nn.Module):
+    def __init__(self, out_size) -> None:
+        super().__init__()
+
+        self.g_layer = torch.nn.Sequential(
+            torch.nn.Linear(out_size, 100, bias=False),
+            torch.nn.LayerNorm(100),
+            torch.nn.Tanh(),
+            torch.nn.Linear(100, out_size, bias=False),
+        )
+
+        for p in self.g_layer.parameters():
+            torch.nn.init.xavier_uniform(p)
+
+    def forward(self, logits):
+        return self.g_layer(logits)
+
+# class ModelWithCalibration(torch.nn.Module):
+#     def __init__(self, model, out_size) -> None:
+#         super().__init__()
+
+#         self.model = model
+#         self.calibration_layer = CalibrationLayer(out_size)
+
+#     def forward(self, batch):
+#         outputs = 
+
+from torch import optim
+
+def g_scaling(model_func, eval_dataloader, out_size) -> CalibrationLayer:
+    calibration_layer = CalibrationLayer(out_size)
+    nll_criterion = torch.nn.CrossEntropyLoss()
+    optimizer = optim.Adam(calibration_layer.parameters, lr=0.0001)
+    for epoch in range(200):
+        for batch in eval_dataloader:
+            logits, labels = model_func(batch)
+            logits = calibration_layer(logits)
+            loss = nll_criterion(logits, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    return calibration_layer
+
 
 
 def temperature_scale(

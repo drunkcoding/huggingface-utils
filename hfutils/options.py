@@ -14,9 +14,9 @@ class RayServeArguments:
         metadata={"help": "Name of the deployment in the configuration file."},
     )
 
-    tag: str = field(
-        metadata={"help": "Tagging service monitoring, must be unique, otherwise delete entry from database."},
-    )
+    # tag: str = field(
+    #     metadata={"help": "Tagging service monitoring, must be unique, otherwise delete entry from database."},
+    # )
 
 @dataclass
 class DeepSpeedArguments:
@@ -82,12 +82,17 @@ class ModelArguments:
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
 
-    local_rank: int = field(
-        default=-1,
-        metadata={
-            "help": "Place holder for deepspeed launcher."
-        },
+    tag: str = field(
+        default="",
+        metadata={"help": "Tagging service monitoring, must be unique, otherwise delete entry from database."},
     )
+
+    # local_rank: int = field(
+    #     default=-1,
+    #     metadata={
+    #         "help": "Place holder for deepspeed launcher."
+    #     },
+    # )
 
 
 @dataclass
@@ -155,5 +160,5 @@ class EnsembleOptions:
     parallel_options: List[ParallelOptions]
 
     # DEPLOYMENT
-    ray_actor_options: Dict
     scheduler: str.lower
+    ray_actor_options: Dict = None

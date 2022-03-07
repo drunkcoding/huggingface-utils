@@ -3,19 +3,19 @@ import numpy as np
 import torch
 
 TASK_TO_KEYS = {
-    "cola": ("sentence", None),
+    "cola": ("sentence", ),
     "mnli": ("premise", "hypothesis"),
     "mrpc": ("sentence1", "sentence2"),
     "qnli": ("question", "sentence"),
     "qqp": ("question1", "question2"),
     "rte": ("sentence1", "sentence2"),
-    "sst2": ("sentence", None),
-    "stsb": ("sentence1", "sentence2"),
-    "wnli": ("sentence1", "sentence2"),
-    "axb": ("sentence1", "sentence2"),
-    "axg": ("premise", "hypothesis"),
-    "boolq": ("question", "passage"),
-    "cb": ("premise", "hypothesis"),
+    "sst2": ("sentence", ),
+    # "stsb": ("sentence1", "sentence2"),
+    # "wnli": ("sentence1", "sentence2"),
+    # "axb": ("sentence1", "sentence2"),
+    # "axg": ("premise", "hypothesis"),
+    # "boolq": ("question", "passage"),
+    # "cb": ("premise", "hypothesis"),
 }
 
 TASK_TO_LABELS = {
@@ -26,12 +26,12 @@ TASK_TO_LABELS = {
     "qqp": ("true", "false"),
     "rte": ("true", "false"),
     "sst2": ("true", "false"),
-    "stsb": None,
-    "wnli": ("true", "false"),
-    "axb": ("true", "false"),
-    "axg": ("true", "false"),
-    "boolq": ("yes", "no"),
-    "cb": ("true", "false", "not"),
+    # "stsb": None,
+    # "wnli": ("true", "false"),
+    # "axb": ("true", "false"),
+    # "axg": ("true", "false"),
+    # "boolq": ("yes", "no"),
+    # "cb": ("true", "false", "not"),
 }
 
 MODEL_TASK_TO_GEN = {
