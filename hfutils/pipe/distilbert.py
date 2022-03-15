@@ -2,7 +2,7 @@ import copy
 from typing import Tuple
 from transformers.models.distilbert.configuration_distilbert import DistilBertConfig
 from transformers.models.distilbert.modeling_distilbert import Embeddings, TransformerBlock
-from transformers import BertForQuestionAnswering
+from transformers import DistilBertForQuestionAnswering
 
 from torch import nn
 import numpy as np
@@ -16,9 +16,9 @@ class EmbeddingsPipe(Embeddings):
         self.deepspeed_enabled = ds
 
     def forward(self, args):
-        if len(args) == 3:
+        if len(args) == 2:
             args = args + (None, )
-        input_ids, token_type_ids, attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        input_ids, attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
 
         hidden_states = super().forward(input_ids)
 
@@ -34,17 +34,39 @@ class TransformerPipe(TransformerBlock):
     def forward(self, args):
         attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
 
-        layer_outputs = super().forward(hidden_states, attention_mask)[0]
-        hidden_states = layer_outputs[0]
+        hidden_states = super().forward(hidden_states, attention_mask)[-1]
+        # hidden_states = layer_outputs
 
         return format_outputs(
             (attention_mask, hidden_states), self.deepspeed_enabled
         )
 
-from bert import BertHeadPipeForQuestionAnswering
+class DistilBertQuestionAnsweringHeadPipe(nn.Module):
+    def __init__(self, config: DistilBertConfig, ds=False):
+        super().__init__()
+        self.deepspeed_enabled = ds
+
+        self.qa_outputs = nn.Linear(config.dim, config.num_labels)
+        assert config.num_labels == 2
+        self.dropout = nn.Dropout(config.qa_dropout)
+
+    def forward(self, args):
+        attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+
+        hidden_states = self.dropout(hidden_states)
+        logits = self.qa_outputs(hidden_states)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
+        end_logits = end_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
+        
+        return format_outputs(
+            (start_logits, end_logits), self.deepspeed_enabled
+        )
+
+
 
 class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
-    def __init__(self, model: BertForQuestionAnswering, exec_map: Tuple = None) -> None:
+    def __init__(self, model: DistilBertForQuestionAnswering, exec_map: Tuple = None) -> None:
         super().__init__()
 
         config = model.config
@@ -55,16 +77,16 @@ class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
 
         self.layers = []
         encoder_embed = EmbeddingsPipe(encoder_config)
-        encoder_embed.load_state_dict(model.bert.embeddings.state_dict())
+        encoder_embed.load_state_dict(model.distilbert.embeddings.state_dict())
         self.layers.append(encoder_embed)
 
         for i in range(self.n_layers):
             encoder_block = TransformerPipe(encoder_config)
-            encoder_block.load_state_dict(model.bert.encoder.layer[i].state_dict())
+            encoder_block.load_state_dict(model.distilbert.transformer.layer[i].state_dict())
             self.layers.append(encoder_block)
 
-        qa_outputs = BertHeadPipeForQuestionAnswering(encoder_config)
-        qa_outputs.load_state_dict(model.qa_outputs.state_dict())
+        qa_outputs = DistilBertQuestionAnsweringHeadPipe(encoder_config)
+        qa_outputs.qa_outputs.load_state_dict(model.qa_outputs.state_dict())
         self.layers.append(qa_outputs)
 
         self.total_params = sum([
@@ -76,6 +98,21 @@ class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
 
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
 
+
+    def forward(self, args, output_hidden_states=False):
+        outputs = args
+        all_hidden_states = ()
+        for idx in range(*self.exec_map):
+            outputs = self.layers[idx](outputs)
+            if output_hidden_states:
+                if idx != len(self.layers) - 1:
+                    all_hidden_states = all_hidden_states + (outputs[1],)
+        if output_hidden_states:
+            return (
+                outputs,
+                all_hidden_states
+            )
+        return outputs
 
 class DistilBertDeepSpeedPipeForQuestionAnswering(PipelineModule):
     def __init__(self, config: DistilBertConfig, **kwargs) -> None:
