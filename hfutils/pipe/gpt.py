@@ -1,17 +1,21 @@
+from typing import Tuple
+import numpy as np
 import torch
-from torch import nn
+from torch import embedding, nn
 
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block
 from transformers.models.gptj.modeling_gptj import GPTJBlock
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoBlock
+from transformers import GPT2LMHeadModel
 
-from hfutils.pipe.base import format_inputs, format_outputs, get_embed_dropout
+from hfutils.pipe.base import PipeMethods, format_inputs, format_outputs, get_embed_dim, get_embed_dropout, get_num_layers
 
-class GPTEmbedding(nn.Module):
+class GPTEmbeddingPipe(nn.Module):
     def __init__(self, config, ds=False):
         super().__init__()
 
         self.config = config
+        self.embed_dim = get_embed_dim(config)
 
         self.wte = nn.Embedding(config.vocab_size, self.embed_dim)
         if config.model_type != "gptj":
@@ -23,11 +27,9 @@ class GPTEmbedding(nn.Module):
         self.deepspeed_enabled = ds
 
     def forward(self, args):
-
         (
             input_ids,
             attention_mask,
-            hidden_states,
         ) = format_inputs(args, self.deepspeed_enabled)
         position_ids = None
 
@@ -52,6 +54,15 @@ class GPTEmbedding(nn.Module):
             hidden_states = inputs_embeds + position_embeds
 
         hidden_states = self.drop(hidden_states)
+
+        batch_size, sequence_length = input_ids.shape[:2]
+        if attention_mask is not None:
+            if batch_size <= 0:
+                raise ValueError("batch_size has to be defined and > 0")
+            attention_mask = attention_mask.view(batch_size, -1)
+            attention_mask = attention_mask[:, None, None, :]
+            attention_mask = (1.0 - attention_mask) * -10000.0
+
         return format_outputs(
             (
                 input_ids,
@@ -78,6 +89,10 @@ class GPTBlockPipe(nn.Module):
         self.layer_idx = layer_idx
         self.deepspeed_enabled = ds
 
+        if layer_idx == get_num_layers(config) - 1:
+            self.embed_dim = get_embed_dim(config)
+            self.ln_f = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_epsilon)
+
     def forward(self, args):
         (
             input_ids,
@@ -90,6 +105,8 @@ class GPTBlockPipe(nn.Module):
             attention_mask=attention_mask,
         )
         hidden_states = outputs[0]
+        if hasattr(self, "ln_f"):
+            hidden_states = self.ln_f(hidden_states)
         return format_outputs(
             (
                 input_ids,
@@ -98,14 +115,13 @@ class GPTBlockPipe(nn.Module):
             ), self.deepspeed_enabled
         )
 
-class GPTOutput(nn.Module):
+class GPTOutputPipe(nn.Module):
     def __init__(self, config, ds=False):
         super().__init__()
-        self.ln_f = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_epsilon)
 
         self.num_labels = config.num_labels
-        self.score = nn.Linear(self.embed_dim, self.num_labels, bias=False)
-
+        # self.score = nn.Linear(self.embed_dim, self.num_labels, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.deepspeed_enabled = ds
 
     def forward(self, args):
@@ -114,15 +130,69 @@ class GPTOutput(nn.Module):
             attention_mask,
             hidden_states,
         ) = format_inputs(args, self.deepspeed_enabled)
-        hidden_states = self.ln_f(hidden_states)
-        input_shape = input_ids.size()
-        output_shape = input_shape + (hidden_states.size(-1),)
-        hidden_states = hidden_states.view(*output_shape)
-        output = self.score(hidden_states)
+        # hidden_states = self.ln_f(hidden_states)
+        lm_logits = self.lm_head(hidden_states)
+        return lm_logits
 
-        batch_size, _ = input_ids.shape[:2]
+        # input_shape = input_ids.size()
+        # output_shape = input_shape + (hidden_states.size(-1),)
+        # hidden_states = hidden_states.view(*output_shape)
+        # output = self.score(hidden_states)
 
-        sequence_lengths = torch.ne(input_ids, 50256).sum(-1) - 1
+        # batch_size, _ = input_ids.shape[:2]
 
-        pooled_logits = output[range(batch_size), sequence_lengths]
-        return pooled_logits
+        # sequence_lengths = torch.ne(input_ids, 50256).sum(-1) - 1
+
+        # pooled_logits = output[range(batch_size), sequence_lengths]
+        # return pooled_logits
+
+class GPTLMHeadModelPipe(nn.Module, PipeMethods):
+    def __init__(self, model: GPT2LMHeadModel, exec_map: Tuple = None) -> None:
+        super().__init__()
+
+        config = model.config
+
+        self.n_layers = get_num_layers(config)
+
+        self.layers = []
+        embedding = GPTEmbeddingPipe(config)
+        embedding.wte.load_state_dict(model.transformer.wte.state_dict())
+        if hasattr(embedding, "wpe"):
+            embedding.wpe.load_state_dict(model.transformer.wpe.state_dict())
+        embedding.drop.load_state_dict(model.transformer.drop.state_dict())
+        self.layers.append(embedding)
+
+        for i in range(self.n_layers):
+            block = GPTBlockPipe(config, i)
+            block.block.load_state_dict(model.transformer.h[i].state_dict())
+            if hasattr(block, "ln_f"):
+                block.ln_f.load_state_dict(model.transformer.ln_f.state_dict())
+            self.layers.append(block)
+
+        head = GPTOutputPipe(config)
+        head.lm_head.load_state_dict(model.lm_head.state_dict())
+        self.layers.append(head)
+
+        self.total_params = sum([
+            sum([np.prod(p.size()) for p in layer.parameters()])
+            for layer in self.layers
+        ])
+
+        self.layers = nn.ModuleList(self.layers)
+
+        self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
+
+    def forward(self, args, output_hidden_states=False):
+        outputs = args
+        all_hidden_states = ()
+        for idx in range(*self.exec_map):
+            outputs = self.layers[idx](outputs)
+            if output_hidden_states:
+                if idx != len(self.layers) - 1:
+                    all_hidden_states = all_hidden_states + (outputs[2],)
+        if output_hidden_states:
+            return (
+                outputs,
+                all_hidden_states
+            )
+        return outputs

@@ -1,5 +1,8 @@
 import copy
+import gc
+from turtle import forward
 from typing import Tuple
+import torch
 from transformers.models.bert.configuration_bert import BertConfig
 from transformers.models.bert.modeling_bert import BertEmbeddings, BertPooler, BertLayer
 from transformers import BertForQuestionAnswering
@@ -8,7 +11,10 @@ from torch import nn
 import numpy as np
 from deepspeed.pipe import PipelineModule, LayerSpec
 
-from hfutils.model_pipe import format_inputs, format_outputs, get_num_layers
+from hfutils.pipe.base import (
+    get_extended_attention_mask, 
+    format_inputs, 
+    format_outputs, get_num_layers, PipeMethods)
 
 class BertEmbeddingPipe(BertEmbeddings):
     def __init__(self, config: BertConfig, ds=False) -> None:
@@ -19,8 +25,15 @@ class BertEmbeddingPipe(BertEmbeddings):
         if len(args) == 3:
             args = args + (None, )
         input_ids, token_type_ids, attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        input_shape = input_ids.size()
+        device = input_ids.device
+        hidden_states = super().forward(
+            input_ids=input_ids, 
+            token_type_ids=token_type_ids
+        )
+        attention_mask = get_extended_attention_mask(attention_mask, input_shape, device)
 
-        hidden_states = super().forward(input_ids, token_type_ids)
+        # print(attention_mask.shape, hidden_states.shape)
 
         return format_outputs(
             (attention_mask, hidden_states), self.deepspeed_enabled
@@ -34,7 +47,7 @@ class BertLayerPipe(BertLayer):
     def forward(self, args):
         attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
 
-        layer_outputs = super().forward(hidden_states, attention_mask)[0]
+        layer_outputs = super().forward(hidden_states, attention_mask)
         hidden_states = layer_outputs[0]
 
         return format_outputs(
@@ -74,7 +87,7 @@ class BertHeadPipeForQuestionAnswering(nn.Module):
             (start_logits, end_logits), self.deepspeed_enabled
         )
 
-class BertPyTorchPipeForQuestionAnswering(nn.Module):
+class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
     def __init__(self, model: BertForQuestionAnswering, exec_map: Tuple = None) -> None:
         super().__init__()
 
@@ -94,12 +107,12 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module):
             encoder_block.load_state_dict(model.bert.encoder.layer[i].state_dict())
             self.layers.append(encoder_block)
 
-        encoder_pooler = BertPoolerPipe(encoder_config)
-        encoder_pooler.load_state_dict(model.bert.pooler.state_dict())
-        self.layers.append(encoder_pooler)
+        # encoder_pooler = BertPoolerPipe(encoder_config)
+        # encoder_pooler.load_state_dict(model.bert.pooler.state_dict())
+        # self.layers.append(encoder_pooler)
 
         qa_outputs = BertHeadPipeForQuestionAnswering(encoder_config)
-        qa_outputs.load_state_dict(model.qa_outputs.state_dict())
+        qa_outputs.qa_outputs.load_state_dict(model.qa_outputs.state_dict())
         self.layers.append(qa_outputs)
 
         self.total_params = sum([
@@ -107,7 +120,24 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module):
             for layer in self.layers
         ])
 
+        self.layers = nn.ModuleList(self.layers)
+
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
+
+    def forward(self, args, output_hidden_states=False):
+        outputs = args
+        all_hidden_states = ()
+        for idx in range(*self.exec_map):
+            outputs = self.layers[idx](outputs)
+            if output_hidden_states:
+                if idx != len(self.layers) - 1:
+                    all_hidden_states = all_hidden_states + (outputs[1],)
+        if output_hidden_states:
+            return (
+                outputs,
+                all_hidden_states
+            )
+        return outputs
 
 
 class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
@@ -119,8 +149,8 @@ class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
 
         encoder_specs = [
             LayerSpec(BertEmbeddingPipe, encoder_config, True),
-            *[LayerSpec(BertLayerPipe, encoder_config, True) for i in range(self.n_layers)],
-            LayerSpec(BertPoolerPipe, encoder_config, True),
+            *[LayerSpec(BertLayerPipe, encoder_config, True) for _ in range(self.n_layers)],
+            # LayerSpec(BertPoolerPipe, encoder_config, True),
             LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config, True),
         ]
 

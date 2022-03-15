@@ -2,7 +2,7 @@ from transformers import T5ForConditionalGeneration
 import gc
 import torch
 
-from hfutils.model_pipe import T5Pipe
+from hfutils.pipe.base import T5Pipe
 from hfutils.sanity import test_parameters_consistency
 
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     gc.collect()
     torch.cuda.empty_cache()
 
-    # test_parameters_consistency(model_gold, model_test)
+    test_parameters_consistency(model_gold, model_test)
 
     input_ids = torch.Tensor([[200, 200, 200, 200, 0, 0, 0, 0, 0],[200, 200, 200, 200, 0, 0, 0, 0, 0]]).to(device).to(torch.long)
     attention_mask = torch.Tensor([[1, 1, 1, 1, 0, 0, 0, 0, 0],[1, 1, 1, 1, 0, 0, 0, 0, 0]]).to(device).to(torch.long)

@@ -283,7 +283,7 @@ class T5PyTorchPipe(nn.Module):
         ])
 
         # super().__init__(layers=encoder_specs + decoder_specs, **kwargs)
-
+        self.layers = nn.ModuleList(self.layers)
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
 
     def convert(self, device):

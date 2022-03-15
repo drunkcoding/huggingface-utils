@@ -4,6 +4,14 @@ def test_parameters_consistency(model_gold, model_test, abort=True):
     model_test_param = model_test.named_parameters()
     model_gold_param = model_gold.named_parameters()
 
+    # print(model_test_param.keys())
+    # print(model_gold_param.keys())
+
+    # for name, _ in model_test.named_parameters():
+    #     print("model_test", name)
+    # for name, _ in model_gold.named_parameters():
+    #     print("model_gold", name)
+
     for test, gold in zip(model_test_param, model_gold_param):
         name_test, param_test = test
         name_gold, param_gold = gold

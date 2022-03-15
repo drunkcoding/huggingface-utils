@@ -1,4 +1,6 @@
+import gc
 from typing import Tuple
+import numpy as np
 import torch
 
 def get_embed_dropout(config):
@@ -15,14 +17,13 @@ def get_embed_dim(config):
     if hasattr(config, "d_model"):
         return config.d_model
 
-
 def get_num_layers(config):
     if hasattr(config, "num_layers"):
         return config.num_layers
     if hasattr(config, "n_layer"):
         return config.n_layer
     if hasattr(config, "num_hidden_layers"):
-        return config.n_layer
+        return config.num_hidden_layers
 
 def init_all(model, init_func, *params, **kwargs):
     for p in model.parameters():
@@ -39,6 +40,30 @@ def format_outputs(args, ds):
     device = args[0].device
     return tuple([torch.Tensor([127873]).to(device) if t is None else t for t in args])
 
+
+class PipeMethods:
+    def convert(self, device):
+        for idx in range(*self.exec_map):
+            self.layers[idx] = self.layers[idx].to(device)
+
+        # use placeholder to save more memory
+        for i in range(len(self.layers)):
+            if i < self.exec_map[0] or i >= self.exec_map[1]:
+                self.layers[i] = torch.nn.Module()
+
+        torch.cuda.empty_cache()
+        gc.collect()
+        self.device = device
+
+    def partition_by_parameter(self, stage, parts):
+        l_params = self.total_params / parts * stage
+        h_params = self.total_params / parts * (stage + 1) if stage != parts - 1 else self.total_params
+
+        layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
+        layer_params = np.cumsum(layer_params)
+        responsible_layers = np.argwhere((layer_params >= l_params) & (layer_params <= h_params)).flatten()
+
+        self.exec_map = (responsible_layers[0], responsible_layers[-1]+1)
 
 # def get_decoder_start_token_id(
 #         decoder_start_token_id: int = None, bos_token_id: int = None

@@ -1,6 +1,7 @@
 from transformers import *
 import numpy as np
 import torch
+from typing import List
 
 TASK_TO_KEYS = {
     "cola": ("sentence", ),
@@ -105,4 +106,13 @@ def np_to_torch_dtype(np_dtype):
     elif np_dtype == np.object_ or np_dtype.type == np.bytes_:
         return None
     return None
+
+def label2text(task_name, label):
+    if TASK_TO_LABELS[task_name] is None:
+        return label
+    else:
+        return TASK_TO_LABELS[task_name][label]
+
+def token2label(tokens, label_tokens: List):
+    return [label_tokens.index(t) for t in tokens]
 

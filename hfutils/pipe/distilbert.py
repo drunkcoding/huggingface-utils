@@ -8,7 +8,7 @@ from torch import nn
 import numpy as np
 from deepspeed.pipe import PipelineModule, LayerSpec
 
-from hfutils.model_pipe import format_inputs, format_outputs, get_num_layers
+from hfutils.pipe.base import PipeMethods, format_inputs, format_outputs, get_num_layers
 
 class EmbeddingsPipe(Embeddings):
     def __init__(self, config: DistilBertConfig, ds=False) -> None:
@@ -43,7 +43,7 @@ class TransformerPipe(TransformerBlock):
 
 from bert import BertHeadPipeForQuestionAnswering
 
-class DistilBertPyTorchPipeForQuestionAnswering(nn.Module):
+class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
     def __init__(self, model: BertForQuestionAnswering, exec_map: Tuple = None) -> None:
         super().__init__()
 
@@ -71,6 +71,8 @@ class DistilBertPyTorchPipeForQuestionAnswering(nn.Module):
             sum([np.prod(p.size()) for p in layer.parameters()])
             for layer in self.layers
         ])
+
+        self.layers = nn.ModuleList(self.layers)
 
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
 

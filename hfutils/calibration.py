@@ -1,10 +1,14 @@
+from sched import scheduler
 from turtle import forward
-from typing import Any, Union
+from typing import Any, Dict, Union
 from torch.functional import Tensor
 import torch.nn as nn
 import torch
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
+from tqdm import tqdm
+import os
 
 
 class ECELoss(nn.Module):
@@ -73,27 +77,34 @@ m = torch.nn.Softmax(dim=-1)
 #     return curr
 
 
-def agg_logits(hist, curr, pos, device):
-    alpha = 0.6
+# def agg_logits(hist, curr, pos, device):
+#     alpha = 0.6
+#     if hist is not None:
+#         hist = hist.to(device)
+#         # return (hist * pos + curr) / (pos+1)
+#         return hist * (1 - alpha) + curr * alpha
+#     return curr
+
+def agg_logits(hist, curr, alpha):
     if hist is not None:
-        hist = hist.to(device)
-        # return (hist * pos + curr) / (pos+1)
         return hist * (1 - alpha) + curr * alpha
     return curr
 
 class CalibrationLayer(torch.nn.Module):
-    def __init__(self, out_size) -> None:
+    def __init__(self, out_size, hidden_size=100) -> None:
         super().__init__()
 
         self.g_layer = torch.nn.Sequential(
-            torch.nn.Linear(out_size, 100, bias=False),
-            torch.nn.LayerNorm(100),
-            torch.nn.Tanh(),
-            torch.nn.Linear(100, out_size, bias=False),
+            torch.nn.Linear(out_size, hidden_size, bias=False),
+            torch.nn.LayerNorm(hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, out_size, bias=False),
+            torch.nn.Dropout(0.1),
         )
 
         for p in self.g_layer.parameters():
-            torch.nn.init.xavier_uniform(p)
+            if isinstance(p, nn.Linear):
+                torch.nn.init.eye_(p.weight)
 
     def forward(self, logits):
         return self.g_layer(logits)
@@ -110,22 +121,45 @@ class CalibrationLayer(torch.nn.Module):
 
 from torch import optim
 
-def g_scaling(model_func, eval_dataloader, out_size) -> CalibrationLayer:
+# def g_scaling(model_func, eval_dataloader, out_size) -> CalibrationLayer:
+#     calibration_layer = CalibrationLayer(out_size)
+#     nll_criterion = torch.nn.CrossEntropyLoss()
+#     optimizer = optim.Adam(calibration_layer.parameters, lr=0.0001)
+#     for epoch in range(200):
+#         for batch in eval_dataloader:
+#             logits, labels = model_func(batch)
+#             logits = calibration_layer(logits)
+#             loss = nll_criterion(logits, labels)
+
+#             optimizer.zero_grad()
+#             loss.backward()
+#             optimizer.step()
+#     return calibration_layer
+
+def g_scaling_helper(outputs: Dict, labels: torch.Tensor, epoches: Dict, out_size: int) -> Dict:
+    model_temperature = {}
+    for key in outputs:
+        labels = labels.to(outputs[key].device)
+        model_temperature[key] = g_scaling(outputs[key], labels, epoches[key], out_size)
+    return model_temperature
+
+def g_scaling(outputs: torch.Tensor, labels: torch.Tensor, epoch: int, out_size: int) -> CalibrationLayer:
     calibration_layer = CalibrationLayer(out_size)
+    calibration_layer = calibration_layer.to(outputs.device)
     nll_criterion = torch.nn.CrossEntropyLoss()
-    optimizer = optim.Adam(calibration_layer.parameters, lr=0.0001)
-    for epoch in range(200):
-        for batch in eval_dataloader:
-            logits, labels = model_func(batch)
-            logits = calibration_layer(logits)
-            loss = nll_criterion(logits, labels)
+    optimizer = optim.Adam(calibration_layer.parameters(), lr=0.001, eps=1e-5)
+    scheduler = CosineAnnealingLR(optimizer, epoch, eta_min=3e-5)
+    assert labels.dtype == torch.int64
+    for _ in tqdm(range(epoch)):
+        logits = calibration_layer(outputs)
+        loss = nll_criterion(logits, labels)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+    print("g_scaling loss", loss)
     return calibration_layer
-
-
 
 def temperature_scale(
     logits: torch.Tensor,
@@ -148,10 +182,28 @@ def temperature_scale(
     )
     return logits / temperature
 
+def temperature_scaling_helper(outputs: Dict, labels: torch.Tensor, devices: Dict) -> Dict:
+    model_temperature = {}
+    for key in outputs:
+        labels = labels.to(devices[key])
+        temperature = (
+            temperature_scaling(outputs[key], labels)
+            .detach()
+            .cpu()
+            .numpy()
+            .tolist()[0]
+        )
+        # bar = 1.5
+        # temperature = bar + (temperature - bar) / 2 if temperature > bar else temperature
+        model_temperature[key] = torch.nn.Parameter(
+            torch.ones(1, device=devices[key]) * temperature
+        )
+    return model_temperature
 
 def temperature_scaling(outputs: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    assert outputs.device == labels.device
+    # assert outputs.device == labels.device
     device = outputs.device
+    labels = labels.to(device)
     temperature = torch.nn.Parameter(torch.ones(1, device=device) * 1.0)
     optimizer = torch.optim.LBFGS([temperature], lr=0.01, max_iter=500)
     # outputs = outputs.to(device)
