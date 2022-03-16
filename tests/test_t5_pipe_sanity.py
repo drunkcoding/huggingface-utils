@@ -1,29 +1,29 @@
+import os
 from transformers import T5ForConditionalGeneration
-import gc
 import torch
 
-from hfutils.pipe.base import T5Pipe
+from hfutils.pipe.t5 import T5PyTorchPipe
 from hfutils.sanity import test_parameters_consistency
 
 
-device = "cuda:1"
+device = "cuda:0"
+
+home_dir = os.path.expanduser("~")
+base_dir = os.path.join(home_dir, "HuggingFace")
+model_dir = os.path.join(base_dir, "google", "t5-base-lm-adapt")
 
 if __name__ == "__main__":
-    model_gold = T5ForConditionalGeneration.from_pretrained(
-        "google/t5-base-lm-adapt"
+    model_gold = T5ForConditionalGeneration.from_pretrained(model_dir
     ).to(device)
     model_gold.eval()
 
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    model_test = T5Pipe(model_gold).to(device)
+    model_test = T5PyTorchPipe(model_gold)
+    model_test.convert(device)
     model_test.eval()
 
-    gc.collect()
-    torch.cuda.empty_cache()
+    # print(model_test.layers)
 
-    test_parameters_consistency(model_gold, model_test)
+    # test_parameters_consistency(model_gold, model_test)
 
     input_ids = torch.Tensor([[200, 200, 200, 200, 0, 0, 0, 0, 0],[200, 200, 200, 200, 0, 0, 0, 0, 0]]).to(device).to(torch.long)
     attention_mask = torch.Tensor([[1, 1, 1, 1, 0, 0, 0, 0, 0],[1, 1, 1, 1, 0, 0, 0, 0, 0]]).to(device).to(torch.long)
