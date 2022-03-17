@@ -12,7 +12,6 @@ from transformers.models.t5.modeling_t5 import T5Block, T5LayerNorm
 
 from hfutils.pipe.base import PipeMethods, format_inputs, format_outputs, get_embed_dim, get_extended_attention_mask, get_num_layers, init_all, invert_attention_mask, prepare_decoder_input_ids_for_generation
 
-
 class T5EmbeddingPipe(nn.Module):
     def __init__(self, config: T5Config, ds=False) -> None:
         super().__init__()
@@ -451,39 +450,7 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
 
         # super().__init__(layers=encoder_specs + decoder_specs, **kwargs)
         self.layers = nn.ModuleList(self.layers)
-        self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
-
-    # def convert(self, device):
-    #     for idx in range(*self.exec_map):
-    #         self.layers[idx] = self.layers[idx].to(device)
-
-    #     # use placeholder to save more memory
-    #     for i in range(len(self.layers)):
-    #         if i < self.exec_map[0] or i >= self.exec_map[1]:
-    #             self.layers[i] = None
-
-    #     torch.cuda.empty_cache()
-    #     gc.collect()
-    #     self.device = device
-
-    # def partition_by_parameter(self, stage, parts):
-    #     l_params = self.total_params / parts * stage
-    #     h_params = self.total_params / parts * (stage + 1) if stage != parts - 1 else self.total_params
-
-    #     layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
-    #     layer_params = np.cumsum(layer_params)
-    #     responsible_layers = np.argwhere((layer_params >= l_params) & (layer_params <= h_params)).flatten()
-
-    #     self.exec_map = (responsible_layers[0], responsible_layers[-1]+1)
-
-    #     # print("layer_params", layer_params)
-    #     # for idx in range(len(layer_params)):
-    #     #     if layer_params[idx] >= l_params and l < 0:
-    #     #         l = idx
-    #     #     if layer_params[idx] <= h_params:
-    #     #         h = idx
-
-        
+        self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))     
 
     # @torch.no_grad()
     def forward(self, args, output_hidden_states=False):
@@ -502,7 +469,7 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs
+        return outputs if isinstance(outputs, Tuple) else (outputs, )
 
 
 class T5DeepSpeedPipe(PipelineModule):
@@ -535,3 +502,94 @@ class T5DeepSpeedPipe(PipelineModule):
         ]
 
         super().__init__(layers=encoder_specs + decoder_specs, **kwargs)
+
+
+T5_ENCODER_INPUTS = {
+    T5EmbeddingPipe.__name__: [
+        'encoder_input_ids', 
+        'encoder_attention_mask'
+    ],
+    T5BlockPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'encoder_hidden_states'
+    ],
+    T5StackFFPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'position_bias', 
+        'encoder_hidden_states'
+    ],
+}
+
+T5_ENCODER_OUTPUTS = {
+    T5EmbeddingPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'encoder_hidden_states'
+    ],
+    T5BlockPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'encoder_hidden_states'
+    ],
+    T5StackFFPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'encoder_hidden_states'
+    ],
+}
+
+T5_DECODER_INPUTS = {
+    T5EmbeddingPipe.__name__: [
+        'encoder_attention_mask', 
+        'extended_attention_mask', 
+        'encoder_hidden_states',
+    ],
+    T5BlockPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'decoder_hidden_states'
+    ],
+    T5StackFFPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'position_bias',
+        'encoder_decoder_position_bias',
+        'decoder_hidden_states',
+    ],
+    T5LMHeadPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'decoder_hidden_states',
+    ]
+}
+
+T5_DECODER_OUTPUTS = {
+    T5EmbeddingPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'decoder_hidden_states'
+    ],
+    T5BlockPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'position_bias',
+        'encoder_decoder_position_bias',
+        'decoder_hidden_states',
+    ],
+    T5StackFFPipe.__name__: [
+        'encoder_extended_attention_mask',
+        'encoder_hidden_states',
+        'extended_attention_mask',
+        'decoder_hidden_states',
+    ],
+    T5LMHeadPipe.__name__: [
+        'logits',
+    ]
+}

@@ -112,19 +112,5 @@ class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs
+        return outputs if isinstance(outputs, Tuple) else (outputs, )
 
-class DistilBertDeepSpeedPipeForQuestionAnswering(PipelineModule):
-    def __init__(self, config: DistilBertConfig, **kwargs) -> None:
-        encoder_config = copy.deepcopy(config)
-        encoder_config.is_decoder = False
-
-        self.n_layers = get_num_layers(config)
-
-        encoder_specs = [
-            LayerSpec(EmbeddingsPipe, encoder_config, True),
-            *[LayerSpec(TransformerPipe, encoder_config, True) for _ in range(self.n_layers)],
-            LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config, True),
-        ]
-
-        super().__init__(layers=encoder_specs, **kwargs)

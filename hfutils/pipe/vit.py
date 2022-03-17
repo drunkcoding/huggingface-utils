@@ -92,4 +92,4 @@ class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs
+        return outputs if isinstance(outputs, Tuple) else (outputs, )
