@@ -11,14 +11,14 @@ from hfutils.preprocess import split_train_test, vit_collate_fn, ViTFeatureExtra
 
 device = "cuda:0"
 
-home_dir = os.path.expanduser("~")
+# home_dir = os.path.expanduser("~")
+home_dir = "/mnt/raid0nvme1"
 base_dir = os.path.join(home_dir, "HuggingFace")
 dataset_path = os.path.join(home_dir, "ImageNet")
 model_dir = os.path.join(base_dir, "google", "vit-base-patch16-224")
 
 dataset = ImageNet(
     dataset_path, 
-    download=False, 
     split="val", 
     transform=ViTFeatureExtractorTransforms(
         model_dir, 
@@ -45,6 +45,7 @@ if __name__ == "__main__":
     pixel_values = encodings['pixel_values'].to(device)
 
     outputs_gold = model_gold(pixel_values, output_hidden_states=True, return_dict=True)
+    print(pixel_values.shape, outputs_gold.logits.shape)
 
     print(outputs_gold.keys())
     print(type(outputs_gold.hidden_states), len(outputs_gold.hidden_states))
@@ -53,6 +54,7 @@ if __name__ == "__main__":
 
     outputs_test = model_test(pixel_values, output_hidden_states=True)
     hidden_states_test = outputs_test[-1]
+    print(pixel_values.shape, outputs_test[0].shape)
 
     print(len(hidden_states_gold), len(hidden_states_test))
 

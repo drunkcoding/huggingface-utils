@@ -19,7 +19,7 @@ class Logger():
 
         format = logging.Formatter(
             fmt="%(asctime)s - %(levelname)s - %(process)d [%(filename)s - %(lineno)d] -   %(message)s",
-            datefmt="%m/%d/%Y %H:%M:%S",
+            datefmt="%m/%d/%Y %H:%M:%S.%f",
         )
 
         if stdout:

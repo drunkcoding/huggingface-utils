@@ -59,9 +59,13 @@ class PipeMethods:
         l_params = self.total_params / parts * stage
         h_params = self.total_params / parts * (stage + 1) if stage != parts - 1 else self.total_params
 
+        print("partition_by_parameter", self.total_params, l_params, h_params, flush=True)
+
         layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
         layer_params = np.cumsum(layer_params)
         responsible_layers = np.argwhere((layer_params >= l_params) & (layer_params <= h_params)).flatten()
+
+        print("responsible_layers", layer_params, responsible_layers, flush=True)
 
         self.exec_map = (responsible_layers[0], responsible_layers[-1]+1)
 

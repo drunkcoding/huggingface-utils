@@ -55,13 +55,15 @@ class DistilBertQuestionAnsweringHeadPipe(nn.Module):
 
         hidden_states = self.dropout(hidden_states)
         logits = self.qa_outputs(hidden_states)
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
-        end_logits = end_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
+
+        return logits
+        # start_logits, end_logits = logits.split(1, dim=-1)
+        # start_logits = start_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
+        # end_logits = end_logits.squeeze(-1).contiguous()  # (bs, max_query_len)
         
-        return format_outputs(
-            (start_logits, end_logits), self.deepspeed_enabled
-        )
+        # return format_outputs(
+        #     (start_logits, end_logits), self.deepspeed_enabled
+        # )
 
 
 
@@ -112,5 +114,17 @@ class DistilBertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs if isinstance(outputs, Tuple) else (outputs, )
+        return outputs # if isinstance(outputs, Tuple) else (outputs, )
 
+
+DISTILBERT_INPUTS = {
+    EmbeddingsPipe.__name__: ["input_ids", "attention_mask"],
+    TransformerPipe.__name__: ["attention_mask", "hidden_states"],
+    DistilBertQuestionAnsweringHeadPipe.__name__: ["attention_mask", "hidden_states"],
+}
+
+DISTILBERT_OUTPUTS = {
+    EmbeddingsPipe.__name__: ["attention_mask", "hidden_states"],
+    TransformerPipe.__name__: ["attention_mask", "hidden_states"],
+    DistilBertQuestionAnsweringHeadPipe.__name__: ["logits"],
+}

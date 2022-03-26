@@ -469,7 +469,7 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs if isinstance(outputs, Tuple) else (outputs, )
+        return outputs # if isinstance(outputs, Tuple) else (outputs, )
 
 
 class T5DeepSpeedPipe(PipelineModule):

@@ -42,7 +42,7 @@ class ViTClassifierPipe(nn.Module):
 
     def forward(self, hidden_states):
         hidden_states = self.layernorm(hidden_states)
-        logits = self.classifier(hidden_states)
+        logits = self.classifier(hidden_states[:, 0, :])
         return logits
 
 class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
@@ -92,4 +92,17 @@ class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs if isinstance(outputs, Tuple) else (outputs, )
+        return outputs # if isinstance(outputs, Tuple) else (outputs, )
+
+
+VIT_INPUTS = {
+    ViTEmbeddingsPipe.__name__: ["pixel_values"],
+    ViTLayerPipe.__name__: ["hidden_states"],
+    ViTClassifierPipe.__name__: ["hidden_states"],
+}
+
+VIT_OUTPUTS = {
+    ViTEmbeddingsPipe.__name__: ["hidden_states"],
+    ViTLayerPipe.__name__: ["hidden_states"],
+    ViTClassifierPipe.__name__: ["logits"],
+}

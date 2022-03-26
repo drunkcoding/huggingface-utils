@@ -12,9 +12,13 @@ import numpy as np
 from deepspeed.pipe import PipelineModule, LayerSpec
 
 from hfutils.pipe.base import (
-    get_extended_attention_mask, 
-    format_inputs, 
-    format_outputs, get_num_layers, PipeMethods)
+    get_extended_attention_mask,
+    format_inputs,
+    format_outputs,
+    get_num_layers,
+    PipeMethods,
+)
+
 
 class BertEmbeddingPipe(BertEmbeddings):
     def __init__(self, config: BertConfig, ds=False) -> None:
@@ -22,22 +26,24 @@ class BertEmbeddingPipe(BertEmbeddings):
         self.deepspeed_enabled = ds
 
     def forward(self, args):
-        if len(args) == 3:
-            args = args + (None, )
-        input_ids, token_type_ids, attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        # if len(args) == 3:
+        #     args = args + (None, )
+        input_ids, token_type_ids, attention_mask = format_inputs(
+            args, self.deepspeed_enabled
+        )
         input_shape = input_ids.size()
         device = input_ids.device
         hidden_states = super().forward(
-            input_ids=input_ids, 
-            token_type_ids=token_type_ids
+            input_ids=input_ids, token_type_ids=token_type_ids
         )
-        attention_mask = get_extended_attention_mask(attention_mask, input_shape, device)
+        attention_mask = get_extended_attention_mask(
+            attention_mask, input_shape, device
+        )
 
         # print(attention_mask.shape, hidden_states.shape)
 
-        return format_outputs(
-            (attention_mask, hidden_states), self.deepspeed_enabled
-        )
+        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+
 
 class BertLayerPipe(BertLayer):
     def __init__(self, config: BertConfig, ds=False):
@@ -50,28 +56,26 @@ class BertLayerPipe(BertLayer):
         layer_outputs = super().forward(hidden_states, attention_mask)
         hidden_states = layer_outputs[0]
 
-        return format_outputs(
-            (attention_mask, hidden_states), self.deepspeed_enabled
-        )
+        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+
 
 class BertPoolerPipe(BertPooler):
     def __init__(self, config: BertConfig, ds=False):
         super().__init__(config)
-        self.deepspeed_enabled = ds       
+        self.deepspeed_enabled = ds
 
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels) 
+        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, args):
         attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
         hidden_states = super().forward(hidden_states)[0]
-        return format_outputs(
-            (attention_mask, hidden_states), self.deepspeed_enabled
-        )
+        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+
 
 class BertHeadPipeForQuestionAnswering(nn.Module):
     def __init__(self, config: BertConfig, ds=False):
         super().__init__()
-        self.deepspeed_enabled = ds        
+        self.deepspeed_enabled = ds
 
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
@@ -79,13 +83,13 @@ class BertHeadPipeForQuestionAnswering(nn.Module):
         attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
         logits = self.qa_outputs(hidden_states)
 
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()
-        end_logits = end_logits.squeeze(-1).contiguous()
+        return logits
+        # start_logits, end_logits = logits.split(1, dim=-1)
+        # start_logits = start_logits.squeeze(-1).contiguous()
+        # end_logits = end_logits.squeeze(-1).contiguous()
 
-        return format_outputs(
-            (start_logits, end_logits), self.deepspeed_enabled
-        )
+        # return format_outputs((start_logits, end_logits), self.deepspeed_enabled)
+
 
 class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
     def __init__(self, model: BertForQuestionAnswering, exec_map: Tuple = None) -> None:
@@ -115,10 +119,12 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
         qa_outputs.qa_outputs.load_state_dict(model.qa_outputs.state_dict())
         self.layers.append(qa_outputs)
 
-        self.total_params = sum([
-            sum([np.prod(p.size()) for p in layer.parameters()])
-            for layer in self.layers
-        ])
+        self.total_params = sum(
+            [
+                sum([np.prod(p.size()) for p in layer.parameters()])
+                for layer in self.layers
+            ]
+        )
 
         self.layers = nn.ModuleList(self.layers)
 
@@ -133,11 +139,8 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
                 if idx != len(self.layers) - 1:
                     all_hidden_states = all_hidden_states + (outputs[1],)
         if output_hidden_states:
-            return (
-                outputs,
-                all_hidden_states
-            )
-        return outputs if isinstance(outputs, Tuple) else (outputs, )
+            return (outputs, all_hidden_states)
+        return outputs # if isinstance(outputs, Tuple) else (outputs,)
 
 
 class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
@@ -149,9 +152,25 @@ class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
 
         encoder_specs = [
             LayerSpec(BertEmbeddingPipe, encoder_config, True),
-            *[LayerSpec(BertLayerPipe, encoder_config, True) for _ in range(self.n_layers)],
+            *[
+                LayerSpec(BertLayerPipe, encoder_config, True)
+                for _ in range(self.n_layers)
+            ],
             # LayerSpec(BertPoolerPipe, encoder_config, True),
             LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config, True),
         ]
 
         super().__init__(layers=encoder_specs, **kwargs)
+
+
+BERT_INPUTS = {
+    BertEmbeddingPipe.__name__: ["input_ids", "token_type_ids", "attention_mask"],
+    BertLayerPipe.__name__: ["attention_mask", "hidden_states"],
+    BertHeadPipeForQuestionAnswering.__name__: ["attention_mask", "hidden_states"],
+}
+
+BERT_OUTPUTS = {
+    BertEmbeddingPipe.__name__: ["attention_mask", "hidden_states"],
+    BertLayerPipe.__name__: ["attention_mask", "hidden_states"],
+    BertHeadPipeForQuestionAnswering.__name__: ["logits"],
+}

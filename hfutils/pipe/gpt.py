@@ -65,7 +65,6 @@ class GPTEmbeddingPipe(nn.Module):
 
         return format_outputs(
             (
-                input_ids,
                 attention_mask,
                 hidden_states
             ), self.deepspeed_enabled
@@ -95,7 +94,6 @@ class GPTBlockPipe(nn.Module):
 
     def forward(self, args):
         (
-            input_ids,
             attention_mask,
             hidden_states,
         ) = format_inputs(args, self.deepspeed_enabled)
@@ -109,7 +107,6 @@ class GPTBlockPipe(nn.Module):
             hidden_states = self.ln_f(hidden_states)
         return format_outputs(
             (
-                input_ids,
                 attention_mask,
                 hidden_states
             ), self.deepspeed_enabled
@@ -126,7 +123,6 @@ class GPTOutputPipe(nn.Module):
 
     def forward(self, args):
         (
-            input_ids,
             attention_mask,
             hidden_states,
         ) = format_inputs(args, self.deepspeed_enabled)
@@ -195,4 +191,19 @@ class GPTLMHeadModelPipe(nn.Module, PipeMethods):
                 outputs,
                 all_hidden_states
             )
-        return outputs if isinstance(outputs, Tuple) else (outputs, )
+        return outputs # if isinstance(outputs, Tuple) else (outputs, )
+
+
+
+GPT_INPUTS = {
+    GPTEmbeddingPipe.__name__: ["input_ids", "attention_mask"],
+    GPTBlockPipe.__name__: ["attention_mask", "hidden_states"],
+    GPTOutputPipe.__name__: ["attention_mask", "hidden_states"],
+}
+
+GPT_OUTPUTS = {
+    GPTEmbeddingPipe.__name__: ["attention_mask", "hidden_states"],
+    GPTBlockPipe.__name__: ["attention_mask", "hidden_states"],
+    GPTOutputPipe.__name__: ["logits"],
+}
+
