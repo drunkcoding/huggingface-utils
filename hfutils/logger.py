@@ -5,17 +5,17 @@ from logging import handlers
 class Logger():
 
     def __init__(self, file, level, rollsize, backup, stdout=False):        
-        if level.lower() == "debug":
-            self.level = logging.DEBUG
-        elif level.lower() == "info":
-            self.level = logging.INFO
-        else:
-            raise ValueError('logging level must be INFO or DEBUG')
+        # if level.lower() == "debug":
+        #     self.level = logging.DEBUG
+        # elif level.lower() == "info":
+        #     self.level = logging.INFO
+        # else:
+        #     raise ValueError('logging level must be INFO or DEBUG')
 
         logging.addLevelName(5, "TRACE")
 
         self.logger = logging.getLogger()
-        self.logger.setLevel(self.level)
+        self.logger.setLevel(level)
 
         format = logging.Formatter(
             fmt="%(asctime)s - %(levelname)s - %(process)d [%(filename)s - %(lineno)d] -   %(message)s",
@@ -38,6 +38,9 @@ class Logger():
 
     def fatal(self, pattern, *args):
         self.logger.fatal(pattern, *args)
+
+    def critical(self, pattern, *args):
+        self.logger.critical(pattern, *args)
 
     def debug(self, pattern, *args):
         self.logger.debug(pattern, *args)

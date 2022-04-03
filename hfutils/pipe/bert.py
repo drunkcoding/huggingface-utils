@@ -21,16 +21,14 @@ from hfutils.pipe.base import (
 
 
 class BertEmbeddingPipe(BertEmbeddings):
-    def __init__(self, config: BertConfig, ds=False) -> None:
+    def __init__(self, config: BertConfig) -> None:
         super().__init__(config)
-        self.deepspeed_enabled = ds
+        # self.deepspeed_enabled = ds
 
     def forward(self, args):
         # if len(args) == 3:
         #     args = args + (None, )
-        input_ids, token_type_ids, attention_mask = format_inputs(
-            args, self.deepspeed_enabled
-        )
+        input_ids, token_type_ids, attention_mask = args
         input_shape = input_ids.size()
         device = input_ids.device
         hidden_states = super().forward(
@@ -42,45 +40,48 @@ class BertEmbeddingPipe(BertEmbeddings):
 
         # print(attention_mask.shape, hidden_states.shape)
 
-        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+        return attention_mask, hidden_states
+        # format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
 
 
 class BertLayerPipe(BertLayer):
-    def __init__(self, config: BertConfig, ds=False):
+    def __init__(self, config: BertConfig):
         super().__init__(config)
-        self.deepspeed_enabled = ds
+        # self.deepspeed_enabled = ds
 
     def forward(self, args):
-        attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        attention_mask, hidden_states = args #format_inputs(args, self.deepspeed_enabled)
 
         layer_outputs = super().forward(hidden_states, attention_mask)
         hidden_states = layer_outputs[0]
 
-        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+        return attention_mask, hidden_states
+        # return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
 
 
 class BertPoolerPipe(BertPooler):
     def __init__(self, config: BertConfig, ds=False):
         super().__init__(config)
-        self.deepspeed_enabled = ds
+        # self.deepspeed_enabled = ds
 
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, args):
-        attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        attention_mask, hidden_states = args # format_inputs(args, self.deepspeed_enabled)
         hidden_states = super().forward(hidden_states)[0]
-        return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
+        return attention_mask, hidden_states
+        # return format_outputs((attention_mask, hidden_states), self.deepspeed_enabled)
 
 
 class BertHeadPipeForQuestionAnswering(nn.Module):
-    def __init__(self, config: BertConfig, ds=False):
+    def __init__(self, config: BertConfig):
         super().__init__()
-        self.deepspeed_enabled = ds
+        # self.deepspeed_enabled = ds
 
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, args):
-        attention_mask, hidden_states = format_inputs(args, self.deepspeed_enabled)
+        attention_mask, hidden_states = args # format_inputs(args, self.deepspeed_enabled)
         logits = self.qa_outputs(hidden_states)
 
         return logits
@@ -130,6 +131,7 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
 
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))
 
+    @torch.no_grad()
     def forward(self, args, output_hidden_states=False):
         outputs = args
         all_hidden_states = ()
@@ -151,13 +153,13 @@ class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
         self.n_layers = get_num_layers(config)
 
         encoder_specs = [
-            LayerSpec(BertEmbeddingPipe, encoder_config, True),
+            LayerSpec(BertEmbeddingPipe, encoder_config),
             *[
-                LayerSpec(BertLayerPipe, encoder_config, True)
+                LayerSpec(BertLayerPipe, encoder_config)
                 for _ in range(self.n_layers)
             ],
             # LayerSpec(BertPoolerPipe, encoder_config, True),
-            LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config, True),
+            LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config),
         ]
 
         super().__init__(layers=encoder_specs, **kwargs)

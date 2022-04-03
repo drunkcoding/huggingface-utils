@@ -177,7 +177,7 @@ def temperature_scale(
 
     temperature = (
         temperature.unsqueeze(1)
-        .expand(logits.size(0), logits.size(1))
+        .expand(logits.shape)
         .to(logits.device)
     )
     return logits / temperature

@@ -484,6 +484,30 @@ nv_energy_consumption{gpu_uuid="GPU-4bb61721-0ae2-9004-636f-e73bab9ef8e0"} 20547
 nv_energy_consumption{gpu_uuid="GPU-7a9c9f44-ff57-1177-e21a-1740a8cf1a65"} 199292.130000
 """
 
+import requests
+import pandas as pd
+import io
+
+def get_energy_by_group():
+    response = requests.get("http://localhost:8002/metrics")
+    text = response.text
+    energy_groups = re.findall(
+        r'nv_energy_consumption{gpu_uuid="(.*)"} (\d+.\d+)', text
+    )
+    energy_groups = dict(energy_groups)
+    for k in energy_groups:
+        energy_groups[k] = float(energy_groups[k])
+    return energy_groups
+
+def get_gpu_uuid(device_id):
+    command = "nvidia-smi --query-gpu=index,uuid,gpu_bus_id --format=csv"
+    result = subprocess.run(command.split(), stdout=subprocess.PIPE)
+    # print(result.stdout)
+    df = pd.read_csv(io.StringIO(result.stdout.decode("utf-8")), index_col="index")
+    df = df.sort_index()
+    df.iloc[:, 0] = df.iloc[:, 0].str.strip()
+    return df.iloc[device_id][" uuid"]
+
 if __name__ == "__main__":
 
     writer = ModelMetricsWriter("tritonserver")

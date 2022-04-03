@@ -452,7 +452,7 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
         self.layers = nn.ModuleList(self.layers)
         self.exec_map = exec_map if exec_map is not None else (0, len(self.layers))     
 
-    # @torch.no_grad()
+    @torch.no_grad()
     def forward(self, args, output_hidden_states=False):
         outputs = args
         all_hidden_states = ()
