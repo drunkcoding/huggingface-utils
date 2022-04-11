@@ -1,4 +1,5 @@
 import copy
+import gc
 from turtle import forward
 from typing import Tuple
 import numpy as np
@@ -22,7 +23,8 @@ class ViTEmbeddingsPipe(ViTEmbeddings):
     def forward(self, args):
         pixel_values = args[0]
         hidden_states = super().forward(pixel_values)
-        return (hidden_states, )
+        return (hidden_states,)
+
 
 class ViTLayerPipe(ViTLayer):
     def __init__(self, config: ViTConfig):
@@ -33,16 +35,22 @@ class ViTLayerPipe(ViTLayer):
         hidden_states = args[0]
         layer_outputs = super().forward(hidden_states)
         hidden_states = layer_outputs[0]
-        return (hidden_states, )
+        return (hidden_states,)
+
 
 # No pooler needed
+
 
 class ViTClassifierPipe(nn.Module):
     def __init__(self, config: ViTConfig):
         super().__init__()
         # self.deepspeed_enabled = ds
-        self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)    
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels) if config.num_labels > 0 else nn.Identity()
+        self.layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.classifier = (
+            nn.Linear(config.hidden_size, config.num_labels)
+            if config.num_labels > 0
+            else nn.Identity()
+        )
 
     def forward(self, args):
         hidden_states = args[0]
@@ -50,8 +58,11 @@ class ViTClassifierPipe(nn.Module):
         logits = self.classifier(hidden_states[:, 0, :])
         return logits
 
+
 class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
-    def __init__(self, model: ViTForImageClassification, exec_map: Tuple = None) -> None:
+    def __init__(
+        self, model: ViTForImageClassification, exec_map: Tuple = None
+    ) -> None:
         super().__init__()
 
         config = model.config
@@ -75,10 +86,12 @@ class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
         classifier.layernorm.load_state_dict(model.vit.layernorm.state_dict())
         self.layers.append(classifier)
 
-        self.total_params = sum([
-            sum([np.prod(p.size()) for p in layer.parameters()])
-            for layer in self.layers
-        ])
+        self.total_params = sum(
+            [
+                sum([np.prod(p.size()) for p in layer.parameters()])
+                for layer in self.layers
+            ]
+        )
 
         self.layers = nn.ModuleList(self.layers)
 
@@ -94,11 +107,25 @@ class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
                 if idx != len(self.layers) - 1:
                     all_hidden_states = all_hidden_states + (outputs,)
         if output_hidden_states:
-            return (
-                outputs,
-                all_hidden_states
-            )
-        return outputs # if isinstance(outputs, Tuple) else (outputs, )
+            return (outputs, all_hidden_states)
+        return outputs  # if isinstance(outputs, Tuple) else (outputs, )
+
+
+class ViTPytorchPipeRandom(nn.Module, PipeMethods):
+    def __init__(self, config: ViTConfig, **kwargs) -> None:
+        super().__init__()
+
+        self.n_layers = get_num_layers(config)
+
+        self.layer_specs = [
+            LayerSpec(ViTEmbeddingsPipe, config),
+            *[LayerSpec(ViTLayerPipe, config) for i in range(self.n_layers)],
+            LayerSpec(ViTClassifierPipe, config),
+        ]
+
+        self.layers = [torch.nn.Module() for _ in self.layer_specs]
+        self.total_params = len(self.layer_specs)
+
 
 class ViTDeepSpeedPipe(PipelineModule):
     def __init__(self, config: ViTConfig, **kwargs) -> None:

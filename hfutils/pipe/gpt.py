@@ -215,6 +215,20 @@ class GPTLMHeadModelPipe(nn.Module, PipeMethods):
         return outputs  # if isinstance(outputs, Tuple) else (outputs, )
 
 
+class GPTPytorchPipeRandom(nn.Module, PipeMethods):
+    def __init__(self, config, **kwargs) -> None:
+        self.n_layers = get_num_layers(config)
+
+        self.layer_specs = [
+            LayerSpec(GPTEmbeddingPipe, config),
+            *[LayerSpec(GPTBlockPipe, config, i) for i in range(self.n_layers)],
+            # LayerSpec(BertPoolerPipe, encoder_config, True),
+            LayerSpec(GPTOutputPipe, config),
+        ]
+
+        self.layers = [torch.nn.Module() for _ in self.layer_specs]
+        self.total_params = len(self.layer_specs)
+
 class GPTDeepSpeedPipe(PipelineModule):
     def __init__(self, config, **kwargs) -> None:
         self.n_layers = get_num_layers(config)

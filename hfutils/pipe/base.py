@@ -55,6 +55,17 @@ class PipeMethods:
         gc.collect()
         self.device = device
 
+    def convert_layer_specs(self, device):
+        self.layers = []
+        l, h = self.exec_map
+        for idx, layer_cls in enumerate(self.layer_specs):
+            if idx >= l and idx < h:
+                self.layers[idx] = layer_cls.build()
+
+        torch.cuda.empty_cache()
+        gc.collect()
+        self.device = device
+
     def partition_by_parameter(self, stage, parts):
         l_params = self.total_params / parts * stage
         h_params = self.total_params / parts * (stage + 1) if stage != parts - 1 else self.total_params

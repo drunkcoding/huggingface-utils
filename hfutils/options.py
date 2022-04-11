@@ -1,3 +1,5 @@
+from email.policy import default
+from typing import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from hfutils.constants import TASK_TO_KEYS
@@ -125,40 +127,104 @@ class InstanceArguments:
         },
     )
 
+
 @dataclass
 class ReplicationOptions:
-    replica_id: int
+    replica: int
     key: str
-    device: torch.device
-    # handle: Any = field(default=None)
-
+    # device: torch.device
+    # ray_actor_options: Dict
 
 @dataclass
 class ParallelOptions:
-    num_stages: int
-    parallel_stage: int
-    first_parallel_layer: int
-    last_parallel_layer: int
+    stages: int
+    ppos: int
 
     # MODEL REPLICAS
-    replication_options: List[ReplicationOptions]
+    replications: List[str]
     rr_counter: int = field(default=0)
-
 
 @dataclass
 class EnsembleOptions:
-    ensemble_weight: float
-    ensemble_pos: int
-    threshold: float
-    temperature: float
+    epos: int
+    th: float
+    # temp: float
     name: str
-    ckpt_path: str
-    skip_connection: bool
-    parallel: bool
+    # path: str
+    # util_params: List[float]
 
     # MODEL PARALLEL
     parallel_options: List[ParallelOptions]
 
-    # DEPLOYMENT
-    scheduler: str.lower
-    ray_actor_options: Dict = None
+
+@dataclass
+class SystemOptions:
+    alpha: float  # ensemble exp smooth weight
+    ens: int  # number of total ensembles
+    type: int  # number of total ensembles
+
+    ensemble_options: List[EnsembleOptions]
+
+@dataclass
+class ModelConfig:
+    name: str  # model full name
+    path: str  # model checkpoint path
+    type: str  # model type, e.g., t5 or bert
+    stages: int  # number of parallel stages
+    ppos: int  # current stage
+    epos: int  # current ensemble
+    # ens: int  # number of total ensembles
+    # alpha: float  # ensemble exp smooth weight
+    temp: float  # temperature scaling
+    # th: float  # confidence threshold
+    util_params: List[float]  # kernel utilization parameter
+    # device: torch.device  # device assigned
+    ray_actor_options: Dict
+    # replica: int
+    key: str
+
+@dataclass
+class HostOptions:
+    host: str
+    # alpha: float  # ensemble exp smooth weight
+    # ens: int  # number of total ensembles
+    type: int  # number of total ensembles
+    placement: Dict[str, List[ModelConfig]]
+
+# @dataclass
+# class ReplicationOptions:
+#     replica_id: int
+#     key: str
+#     device: torch.device
+#     # handle: Any = field(default=None)
+
+
+# @dataclass
+# class ParallelOptions:
+#     num_stages: int
+#     parallel_stage: int
+#     first_parallel_layer: int
+#     last_parallel_layer: int
+
+#     # MODEL REPLICAS
+#     replication_options: List[ReplicationOptions]
+#     rr_counter: int = field(default=0)
+
+
+# @dataclass
+# class EnsembleOptions:
+#     ensemble_weight: float
+#     ensemble_pos: int
+#     threshold: float
+#     temperature: float
+#     name: str
+#     ckpt_path: str
+#     skip_connection: bool
+#     parallel: bool
+
+#     # MODEL PARALLEL
+#     parallel_options: List[ParallelOptions]
+
+#     # DEPLOYMENT
+#     scheduler: str.lower
+#     ray_actor_options: Dict = None

@@ -1,4 +1,5 @@
 import copy
+from functools import partial
 import gc
 from typing import Tuple
 import numpy as np
@@ -398,7 +399,7 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
         config = model.config
         # self.total_params = sum([np.prod(p.size()) for p in model.parameters()])
 
-        self.embed_dim = get_embed_dim(config)
+        # self.embed_dim = get_embed_dim(config)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -471,10 +472,42 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
             )
         return outputs # if isinstance(outputs, Tuple) else (outputs, )
 
+class T5PytorchPipeRandom(nn.Module, PipeMethods):
+    def __init__(self, config: T5Config, **kwargs) -> None:
+        super().__init__()
+
+        encoder_config = copy.deepcopy(config)
+        encoder_config.is_decoder = False
+        encoder_config.use_cache = False
+        encoder_config.is_encoder_decoder = False
+
+        self.n_layers = get_num_layers(config)
+
+        encoder_specs = [
+            LayerSpec(T5EmbeddingPipe, encoder_config),
+            *[LayerSpec(T5BlockPipe, encoder_config, i) for i in range(self.n_layers)],
+            LayerSpec(T5StackFFPipe, encoder_config),
+        ]
+
+        decoder_config = copy.deepcopy(config)
+        decoder_config.is_decoder = True
+        decoder_config.is_encoder_decoder = False
+        decoder_config.num_layers = config.num_decoder_layers
+
+        decoder_specs = [
+            LayerSpec(T5EmbeddingPipe, decoder_config),
+            *[LayerSpec(T5BlockPipe, decoder_config, i) for i in range(self.n_layers)],
+            LayerSpec(T5StackFFPipe, decoder_config),
+            LayerSpec(T5LMHeadPipe, decoder_config),
+        ]
+
+        self.layer_specs = encoder_specs + decoder_specs
+        self.layers = [torch.nn.Module() for _ in self.layer_specs]
+        self.total_params = len(self.layer_specs)
 
 class T5DeepSpeedPipe(PipelineModule):
     def __init__(self, config: T5Config, **kwargs) -> None:
-        self.embed_dim = get_embed_dim(config)
+        # self.embed_dim = get_embed_dim(config)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False

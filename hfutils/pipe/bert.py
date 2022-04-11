@@ -145,6 +145,27 @@ class BertPyTorchPipeForQuestionAnswering(nn.Module, PipeMethods):
         return outputs # if isinstance(outputs, Tuple) else (outputs,)
 
 
+class BertPytorchPipeRandom(nn.Module, PipeMethods):
+     def __init__(self, config: BertConfig, **kwargs) -> None:
+        encoder_config = copy.deepcopy(config)
+        encoder_config.is_decoder = False
+
+        self.n_layers = get_num_layers(config)
+
+        self.layer_specs = [
+            LayerSpec(BertEmbeddingPipe, encoder_config),
+            *[
+                LayerSpec(BertLayerPipe, encoder_config)
+                for _ in range(self.n_layers)
+            ],
+            # LayerSpec(BertPoolerPipe, encoder_config, True),
+            LayerSpec(BertHeadPipeForQuestionAnswering, encoder_config),
+        ]
+
+        self.layers = [torch.nn.Module() for _ in self.layer_specs]
+        self.total_params = len(self.layer_specs)
+
+
 class BertDeepSpeedPipeForQuestionAnswering(PipelineModule):
     def __init__(self, config: BertConfig, **kwargs) -> None:
         encoder_config = copy.deepcopy(config)
