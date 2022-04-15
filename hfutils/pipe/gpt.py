@@ -69,13 +69,13 @@ class GPTEmbeddingPipe(nn.Module):
 
         hidden_states = self.drop(hidden_states)
 
-        batch_size, sequence_length = input_ids.shape[:2]
-        if attention_mask is not None:
-            if batch_size <= 0:
-                raise ValueError("batch_size has to be defined and > 0")
-            attention_mask = attention_mask.view(batch_size, -1)
-            attention_mask = attention_mask[:, None, None, :]
-            attention_mask = (1.0 - attention_mask) * -10000.0
+        # batch_size, sequence_length = input_ids.shape[:2]
+        # if attention_mask is not None:
+        #     if batch_size <= 0:
+        #         raise ValueError("batch_size has to be defined and > 0")
+        #     attention_mask = attention_mask.view(batch_size, -1)
+        #     attention_mask = attention_mask[:, None, None, :]
+        #     attention_mask = (1.0 - attention_mask) * -10000.0
 
         return attention_mask, hidden_states
         # return format_outputs(
@@ -115,7 +115,8 @@ class GPTBlockPipe(nn.Module):
         # ) = format_inputs(args, self.deepspeed_enabled)
         attention_mask, hidden_states = args
 
-        outputs = self.block(hidden_states, attention_mask=attention_mask,)
+        # outputs = self.block(hidden_states, attention_mask=attention_mask,)
+        outputs = self.block(hidden_states, attention_mask=None)
         hidden_states = outputs[0]
         if hasattr(self, "ln_f"):
             hidden_states = self.ln_f(hidden_states)

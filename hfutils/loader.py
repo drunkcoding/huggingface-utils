@@ -113,7 +113,7 @@ def load_glue_task_val(preprocess_function, task_name):
     )
     return dataset
 
-def load_glue_val(preprocess_function):
+def load_glue_val(preprocess_function, **kwds):
     raw_datasets = None
     for task_key in TASK_TO_LABELS.keys():
         eval_name = "validation_matched" if task_key == "mnli" else "validation"
@@ -124,6 +124,7 @@ def load_glue_val(preprocess_function):
         dataset = dataset.map(
             partial(preprocess_function, task_name=task_key),
             batched=True,
+            num_proc=10,
             desc="Running tokenizer on dataset",
             remove_columns=["idx", "label"] + list(TASK_TO_KEYS[task_key])
         )
@@ -132,6 +133,29 @@ def load_glue_val(preprocess_function):
         else:
             raw_datasets = concatenate_datasets([raw_datasets, dataset])
     print("load_glue_val", raw_datasets)
+
+    return raw_datasets
+
+def load_glue_train(preprocess_function, **kwds):
+    raw_datasets = None
+    for task_key in TASK_TO_LABELS.keys():
+        eval_name = "train"
+        dataset = load_dataset(
+            "glue", task_key, split=eval_name
+        )
+        print("glue", task_key, dataset)
+        dataset = dataset.map(
+            partial(preprocess_function, task_name=task_key),
+            batched=True,
+            num_proc=10,
+            desc="Running tokenizer on dataset",
+            remove_columns=["idx", "label"] + list(TASK_TO_KEYS[task_key])
+        )
+        if raw_datasets is None:
+            raw_datasets = dataset
+        else:
+            raw_datasets = concatenate_datasets([raw_datasets, dataset])
+    print("load_glue_train", raw_datasets)
 
     return raw_datasets
 
