@@ -56,25 +56,27 @@ class PipeMethods:
         self.device = device
 
     def convert_layer_specs(self, device):
-        self.layers = []
         l, h = self.exec_map
         for idx, layer_cls in enumerate(self.layer_specs):
             if idx >= l and idx < h:
-                self.layers[idx] = layer_cls.build()
+                self.layers[idx] = layer_cls.build().to(device)
 
         torch.cuda.empty_cache()
         gc.collect()
         self.device = device
 
-    def partition_by_parameter(self, stage, parts):
+    def partition_by_parameter(self, stage, parts, synthetic=False):
         l_params = self.total_params / parts * stage
         h_params = self.total_params / parts * (stage + 1) if stage != parts - 1 else self.total_params
 
         print("partition_by_parameter", self.total_params, l_params, h_params, flush=True)
 
-        layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
-        layer_params = np.cumsum(layer_params)
-        responsible_layers = np.argwhere((layer_params >= l_params) & (layer_params <= h_params)).flatten()
+        if synthetic:
+            layer_params = np.cumsum([1] * self.total_params)
+        else:
+            layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
+            layer_params = np.cumsum(layer_params)
+        responsible_layers = np.argwhere((layer_params > l_params) & (layer_params <= h_params)).flatten()
 
         print("responsible_layers", layer_params, responsible_layers, flush=True)
 

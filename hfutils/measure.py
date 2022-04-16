@@ -488,8 +488,8 @@ import requests
 import pandas as pd
 import io
 
-def get_energy_by_group():
-    response = requests.get("http://localhost:8002/metrics")
+def get_energy_by_group(host="localhost"):
+    response = requests.get(f"http://{host}:8002/metrics")
     text = response.text
     energy_groups = re.findall(
         r'nv_energy_consumption{gpu_uuid="(.*)"} (\d+.\d+)', text

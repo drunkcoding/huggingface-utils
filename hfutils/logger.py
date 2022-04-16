@@ -4,7 +4,7 @@ from logging import handlers
 
 class Logger():
 
-    def __init__(self, file, level, rollsize, backup, stdout=False):        
+    def __init__(self, filename, level, rollsize, backup, stdout=False):        
         # if level.lower() == "debug":
         #     self.level = logging.DEBUG
         # elif level.lower() == "info":
@@ -27,7 +27,7 @@ class Logger():
             ch.setFormatter(format)
             self.logger.addHandler(ch)
 
-        filename = file.split(".")[0]
+        # filename = file.split(".")[0]
 
         fh = handlers.RotatingFileHandler(f"{filename}.log", maxBytes=rollsize, backupCount=backup)
         fh.setFormatter(format)

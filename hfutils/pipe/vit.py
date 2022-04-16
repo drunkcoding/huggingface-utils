@@ -126,6 +126,19 @@ class ViTPytorchPipeRandom(nn.Module, PipeMethods):
         self.layers = [torch.nn.Module() for _ in self.layer_specs]
         self.total_params = len(self.layer_specs)
 
+    @torch.no_grad()
+    def forward(self, args, output_hidden_states=False):
+        outputs = args
+        all_hidden_states = ()
+        for idx in range(*self.exec_map):
+            outputs = self.layers[idx](outputs)
+            if output_hidden_states:
+                if idx != len(self.layers) - 1:
+                    all_hidden_states = all_hidden_states + (outputs,)
+        if output_hidden_states:
+            return (outputs, all_hidden_states)
+        return outputs  # if isinstance(outputs, Tuple) else (outputs, )
+
 
 class ViTDeepSpeedPipe(PipelineModule):
     def __init__(self, config: ViTConfig, **kwargs) -> None:
