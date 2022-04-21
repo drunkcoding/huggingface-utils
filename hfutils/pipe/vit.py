@@ -86,12 +86,11 @@ class ViTPyTorchPipeForImageClassification(nn.Module, PipeMethods):
         classifier.layernorm.load_state_dict(model.vit.layernorm.state_dict())
         self.layers.append(classifier)
 
-        self.total_params = sum(
-            [
-                sum([np.prod(p.size()) for p in layer.parameters()])
-                for layer in self.layers
-            ]
-        )
+        self.layer_param = [
+            sum([np.prod(p.size()) for p in layer.parameters()])
+            for layer in self.layers
+        ]
+        self.total_params = sum(self.layer_param)
 
         self.layers = nn.ModuleList(self.layers)
 
@@ -124,7 +123,8 @@ class ViTPytorchPipeRandom(nn.Module, PipeMethods):
         ]
 
         self.layers = [torch.nn.Module() for _ in self.layer_specs]
-        self.total_params = len(self.layer_specs)
+        self.layer_param = [1] * len(self.layer_specs)
+        self.total_params = sum(self.layer_param)
 
     @torch.no_grad()
     def forward(self, args, output_hidden_states=False):

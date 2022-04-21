@@ -1,4 +1,3 @@
 #!/bin/bash
-
-python3 -m build
-python3 -m pip install dist/*.tar.gz
+/home/ubuntu/miniconda3/envs/torch/bin/python -m build
+/home/ubuntu/miniconda3/envs/torch/bin/python -m pip install dist/*.tar.gz

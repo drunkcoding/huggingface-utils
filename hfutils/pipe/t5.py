@@ -444,10 +444,11 @@ class T5PyTorchPipe(nn.Module, PipeMethods):
         lm_head.lm_head.load_state_dict(model.lm_head.state_dict())
         self.layers.append(lm_head)
         
-        self.total_params = sum([
+        self.layer_param = [
             sum([np.prod(p.size()) for p in layer.parameters()])
             for layer in self.layers
-        ])
+        ]
+        self.total_params = sum(self.layer_param)
 
         # super().__init__(layers=encoder_specs + decoder_specs, **kwargs)
         self.layers = nn.ModuleList(self.layers)
@@ -503,7 +504,27 @@ class T5PytorchPipeRandom(nn.Module, PipeMethods):
 
         self.layer_specs = encoder_specs + decoder_specs
         self.layers = [torch.nn.Module() for _ in self.layer_specs]
-        self.total_params = len(self.layer_specs)
+        self.layer_param = [1] * len(self.layer_specs)
+        self.total_params = self.total_params = sum(self.layer_param)
+
+    @torch.no_grad()
+    def forward(self, args, output_hidden_states=False):
+        outputs = args
+        all_hidden_states = ()
+        for idx in range(*self.exec_map):
+            outputs = self.layers[idx](outputs)
+            if output_hidden_states:
+                if not (isinstance(self.layers[idx], T5BlockPipe) and self.layers[idx].block_idx == self.n_layers-1):
+                    if idx != len(self.layers) - 1:
+                        all_hidden_states = all_hidden_states + (
+                            outputs[-1],
+                        )
+        if output_hidden_states:
+            return (
+                outputs,
+                all_hidden_states
+            )
+        return outputs # if isinstance(outputs, Tuple) else (outputs, )
 
 class T5DeepSpeedPipe(PipelineModule):
     def __init__(self, config: T5Config, **kwargs) -> None:

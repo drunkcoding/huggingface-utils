@@ -191,12 +191,11 @@ class GPTLMHeadModelPipe(nn.Module, PipeMethods):
         head.lm_head.load_state_dict(model.lm_head.state_dict())
         self.layers.append(head)
 
-        self.total_params = sum(
-            [
-                sum([np.prod(p.size()) for p in layer.parameters()])
-                for layer in self.layers
-            ]
-        )
+        self.layer_param = [
+            sum([np.prod(p.size()) for p in layer.parameters()])
+            for layer in self.layers
+        ]
+        self.total_params = sum(self.layer_param)
 
         self.layers = nn.ModuleList(self.layers)
 
@@ -230,7 +229,8 @@ class GPTPytorchPipeRandom(nn.Module, PipeMethods):
         ]
 
         self.layers = [torch.nn.Module() for _ in self.layer_specs]
-        self.total_params = len(self.layer_specs)
+        self.layer_param = [1] * len(self.layer_specs)
+        self.total_params = self.total_params = sum(self.layer_param)
 
     @torch.no_grad()
     def forward(self, args, output_hidden_states=False):

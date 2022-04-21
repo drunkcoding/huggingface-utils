@@ -508,6 +508,34 @@ def get_gpu_uuid(device_id):
     df.iloc[:, 0] = df.iloc[:, 0].str.strip()
     return df.iloc[device_id][" uuid"]
 
+
+import socket
+def get_host_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 1))
+    host_ip = s.getsockname()[0]
+    return host_ip
+
+# dictionary_reader_example.py
+import sys
+import pynvml
+sys.path.append("/usr/local/dcgm/bindings/python3")
+
+from DcgmReader import DcgmReader
+import dcgm_fields
+
+# pynvml.nvmlInit()
+
+def get_local_gpt_power(index):
+    handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+    power = pynvml.nvmlDeviceGetPowerUsage(handle)
+    return power
+
+def get_remote_gpu_energy(host, index):
+    dr = DcgmReader(hostname=host, fieldIds=[dcgm_fields.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION], updateFrequency=100)
+    data = dr.GetLatestGpuValuesAsDict(True)
+    return list(data[index].values())[0]
+
 if __name__ == "__main__":
 
     writer = ModelMetricsWriter("tritonserver")

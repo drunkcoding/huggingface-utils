@@ -71,11 +71,11 @@ class PipeMethods:
 
         print("partition_by_parameter", self.total_params, l_params, h_params, flush=True)
 
-        if synthetic:
-            layer_params = np.cumsum([1] * self.total_params)
-        else:
-            layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
-            layer_params = np.cumsum(layer_params)
+        # if synthetic:
+        #     layer_params = np.cumsum([1] * self.total_params)
+        # else:
+        #     layer_params = [sum([np.prod(p.size()) for p in self.layers[idx].parameters()]) for idx in range(len(self.layers))]
+        layer_params = np.cumsum(self.layer_param)
         responsible_layers = np.argwhere((layer_params > l_params) & (layer_params <= h_params)).flatten()
 
         print("responsible_layers", layer_params, responsible_layers, flush=True)
